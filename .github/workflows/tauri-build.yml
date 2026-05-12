@@ -91,28 +91,40 @@ jobs:
         with:
           targets: ${{ matrix.target }}, wasm32-unknown-unknown
 
-      - name: Install wasm-pack
-        uses: jetli/wasm-pack-action@v0.4.0
-        with:
-          version: 'latest'
+      - name: Install frontend dependencies
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build WASM extensions
         run: |
-          cd extensions/rust-wasm
-          pnpm build
+          # Use a newer wasm-pack to ensure wasm-opt = false is respected
+          if ! command -v wasm-pack &> /dev/null; then
+            curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          fi
+          
+          # Add wasm-pack to PATH if installed via script
+          export PATH=$PATH:$HOME/.cargo/bin
+          
+          echo "Building ferrox-wasm..."
+          cd extensions/rust
+          wasm-pack build --target web --out-dir ../rust-wasm/pkg --features wasm -- --no-default-features
+          
+          echo "Building chgdiff-wasm..."
           cd ../chgdiff-wasm
           wasm-pack build --target web --out-dir ../../src/lib/electronic/chgdiff-wasm-pkg
+
+      - name: Generate documentation chunks
+        run: pnpm build:doc-chunks
+
+      - name: Verify WASM and Doc Chunks
+        run: |
+          ls -la extensions/rust-wasm/pkg/ferrox_bg.wasm
+          ls -la src/lib/electronic/chgdiff-wasm-pkg/chgdiff_wasm_bg.wasm
+          ls -la src/lib/chat/docs-chunks.json
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-
-      - name: Install frontend dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Generate documentation chunks
-        run: pnpm build:doc-chunks
 
       - name: Generate icons
         run: node scripts/generate-icons.js
