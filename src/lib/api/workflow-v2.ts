@@ -95,6 +95,11 @@ export async function reset_v2_workflow(id: string) {
   return handle(await fetch(`${API_BASE}/engine/workflows/${id}/reset`, { method: 'POST' }))
 }
 
+export async function delete_v2_workflow(id: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/engine/workflows/${id}`, { method: 'DELETE' })
+  if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`)
+}
+
 // --- Tasks ---
 
 export async function get_v2_task(id: string) {

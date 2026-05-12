@@ -1,6 +1,7 @@
 <script lang="ts">
   import { WorkflowEditor } from '$lib/workflow'
   import * as api from '$lib/api/workflow'
+  import * as workflow_api from '$lib/api/workflow-v2'
   import { list_v2_workflows, type V2WorkflowSummary } from '$lib/api/workflow-v2'
   import type { WorkflowSummary, WorkflowTemplate } from '$lib/workflow/workflow-types'
   import ProjectListView from '$lib/workflow/ProjectListView.svelte'
@@ -264,7 +265,7 @@
     if (!confirm(`Delete workflow?`)) return
     try {
       if (source === `Engine`) {
-        await workflow_api.delete(id)
+        await workflow_api.delete_v2_workflow(id)
       } else {
         await api.delete_workflow(id)
       }
@@ -466,7 +467,7 @@
                 {#if wf.source === `GUI`}
                   <button class="wf-delete" onclick={() => {
                     const orig = workflows.find(w => w.id === wf.id)
-                    if (orig) delete_workflow(orig)
+                    if (orig) delete_workflow(wf.id, wf.source)
                   }} title="Delete">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
@@ -943,4 +944,3 @@
   }
 
 </style>
-e>
