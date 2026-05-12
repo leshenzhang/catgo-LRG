@@ -106,7 +106,7 @@ jobs:
           
           echo "Building ferrox-wasm..."
           cd extensions/rust
-          wasm-pack build --target web --out-dir ../rust-wasm/pkg --features wasm -- --no-default-features
+          wasm-pack build --target web --out-dir ../rust-wasm/pkg --features wasm
           
           echo "Building chgdiff-wasm..."
           cd ../chgdiff-wasm

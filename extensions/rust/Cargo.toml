@@ -92,7 +92,7 @@ tempfile = "3"
 pyo3-build-config = { version = "0.27.2", optional = true }
 
 [features]
-default = ["rayon"]
+default = []
 python = ["dep:pyo3", "dep:pyo3-build-config", "dep:pyo3-stub-gen", "rayon"]
 wasm = [
   "dep:console_error_panic_hook",
