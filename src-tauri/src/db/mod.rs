@@ -54,35 +54,15 @@ impl DbState {
 /// files that trigger the Tauri file-watcher -> infinite rebuild loop -> crash.
 /// We detect the project root by walking up from CWD to find `package.json`.
 fn resolve_default_path() -> PathBuf {
-    let db_rel = "server/data/catgo_results.db";
-
-    // Walk up from CWD to find the project root (contains package.json)
-    if let Ok(cwd) = std::env::current_dir() {
-        let mut dir = cwd.as_path();
-        loop {
-            if dir.join("package.json").exists() {
-                let candidate = dir.join(db_rel);
-                return candidate;
-            }
-            match dir.parent() {
-                Some(parent) => dir = parent,
-                None => break,
-            }
-        }
+    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| ".".to_string());
+    let base_dir = PathBuf::from(home).join(".catgo");
+    
+    // Ensure .catgo directory exists
+    if !base_dir.exists() {
+        let _ = std::fs::create_dir_all(&base_dir);
     }
-
-    // Fallback: try exe-relative path (production build)
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            let candidate = exe_dir.join(db_rel);
-            if candidate.exists() {
-                return candidate;
-            }
-        }
-    }
-
-    // Last resort: relative to CWD (same as before)
-    PathBuf::from(db_rel)
+    
+    base_dir.join("catgo_results.db")
 }
 
 pub(crate) fn get_conn(state: &DbState) -> Result<Connection, String> {

@@ -29,13 +29,13 @@ const USERNAME_POOL = [
 ]
 
 const DEFAULT_CONFIG: ChatConfig = {
-  provider: `sdk-claude`,
-  model: ``,
+  provider: `gemini`,
+  model: `gemini-2.5-pro`,
   temperature: 0.3,
   max_tokens: 4096,
   api_key: ``,
   base_url: ``,
-  mode: `sdk`,
+  mode: `api`,
 }
 
 function load_from_storage<T>(key: string, fallback: T): T {

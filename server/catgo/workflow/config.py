@@ -63,7 +63,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "paths": {
         "work_dir_template": "{base_dir}/{workflow_id}/{task_id}",
         "base_dir": "",
-        "db_path": "~/.catgo/catgo.db",
+        "db_path": "~/.catgo/catgo_results.db",
         "log_dir": "~/.catgo/logs/",
         "config_dir": "~/.catgo/",
     },

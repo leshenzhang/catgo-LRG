@@ -48,6 +48,8 @@ a = Analysis(
         ('catgo/workflow/skills', 'catgo/workflow/skills'),
         # Tool JSON schemas
         ('catgo/tool_schema/*.json', 'catgo/tool_schema'),
+        # Bundled data files (water boxes, etc.)
+        ('data/*', 'data'),
         # HPC job script templates
         ('templates/*.sh', 'templates'),
     ] + pymatgen_datas + tblite_datas + ase_datas,
