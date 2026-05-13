@@ -28,6 +28,10 @@ jobs:
             target: aarch64-apple-darwin
             backend_target: aarch64-apple-darwin
             name: macOS (Apple Silicon)
+          - platform: macos-13
+            target: x86_64-apple-darwin
+            backend_target: x86_64-apple-darwin
+            name: macOS (Intel)
 
     runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.name }})
@@ -143,11 +147,23 @@ jobs:
 
             ### Downloads
             - **Windows**: Download `.msi` (recommended) or `.exe`
-            - **macOS**: Download `.dmg` (Apple Silicon M1/M2/M3)
+            - **macOS (Apple Silicon)**: Download `_aarch64.dmg` (M1/M2/M3/M4)
+            - **macOS (Intel)**: Download `_x64.dmg`
 
             ### Installation
             - **Windows**: Run the `.msi` installer
             - **macOS**: Open `.dmg` and drag CatGo to Applications
+
+            ### Troubleshooting (macOS)
+            If you see a message saying **"CatGo is damaged and can’t be opened"** or **"unidentified developer"**:
+            1. Right-click `CatGo.app` in your Applications folder.
+            2. Select **Open** from the context menu.
+            3. Click **Open** again in the dialog that appears.
+            
+            Alternatively, run this command in your terminal:
+            ```bash
+            sudo xattr -rd com.apple.quarantine /Applications/CatGo.app
+            ```
 
             ### Features
             - Built-in calculation backend (xTB, EMT)
