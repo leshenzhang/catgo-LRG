@@ -280,7 +280,11 @@ pub fn run() {
             } else {
                 // Try to spawn the bundled backend sidecar
                 let shell = app.shell();
-                match shell.sidecar("binaries/catgo-server") {
+                // Tauri strips the "binaries/" prefix and "-<triple>" suffix at
+                // bundle time, so the runtime sidecar name is just "catgo-server".
+                // (The "binaries/" prefix in tauri.conf.json's externalBin is only
+                //  the *source* location for the bundler, not the runtime path.)
+                match shell.sidecar("catgo-server") {
                     Ok(cmd) => {
                         // Augment PATH so the Python sidecar can discover user-installed
                         // CLIs (claude, gemini, codex). macOS GUI apps run with a stripped
