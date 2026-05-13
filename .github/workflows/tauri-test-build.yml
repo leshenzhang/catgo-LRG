@@ -19,6 +19,8 @@ jobs:
     if: ${{ inputs.platform == 'all' || inputs.platform == 'windows' }}
     runs-on: windows-latest
     name: Build Windows
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
     defaults:
       run:
         shell: bash -el {0}
@@ -70,6 +72,11 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install frontend dependencies
         run: pnpm install --no-frozen-lockfile
 
@@ -108,6 +115,8 @@ jobs:
     if: ${{ inputs.platform == 'all' || inputs.platform == 'macos' }}
     runs-on: macos-latest
     name: Build macOS (Apple Silicon)
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
     defaults:
       run:
         shell: bash -el {0}
@@ -160,6 +169,11 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install frontend dependencies
         run: pnpm install --no-frozen-lockfile
 
@@ -182,8 +196,13 @@ jobs:
       - name: Generate icons
         run: node scripts/generate-icons.js
 
+      - name: Build agent sidecar
+        run: pnpm build:agent mac-arm
+
       - name: Build Tauri app
-        run: pnpm tauri:build -- --target aarch64-apple-darwin
+        run: |
+          pnpm desktop:build
+          pnpm exec tauri build --target aarch64-apple-darwin
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -198,6 +217,8 @@ jobs:
     if: ${{ inputs.platform == 'all' || inputs.platform == 'macos-intel' }}
     runs-on: macos-13
     name: Build macOS (Intel)
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
     defaults:
       run:
         shell: bash -el {0}
@@ -250,6 +271,11 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install frontend dependencies
         run: pnpm install --no-frozen-lockfile
 
@@ -272,8 +298,13 @@ jobs:
       - name: Generate icons
         run: node scripts/generate-icons.js
 
+      - name: Build agent sidecar
+        run: pnpm build:agent mac-intel
+
       - name: Build Tauri app
-        run: pnpm tauri:build -- --target x86_64-apple-darwin
+        run: |
+          pnpm desktop:build
+          pnpm exec tauri build --target x86_64-apple-darwin
 
       - name: Upload macOS Intel artifacts
         uses: actions/upload-artifact@v4
