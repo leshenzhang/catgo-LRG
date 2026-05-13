@@ -2,7 +2,63 @@
 use tauri::Emitter;
 use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
+use std::collections::HashSet;
 use std::sync::Mutex;
+
+/// Build an augmented PATH so the sidecar can find user-installed CLIs
+/// (claude, gemini, codex, ollama) that live in shell-managed directories.
+///
+/// macOS GUI apps inherit a stripped PATH (~ `/usr/bin:/bin:/usr/sbin:/sbin`),
+/// which makes `shutil.which("claude")` in the Python sidecar return None
+/// even when the binary is installed. We fix that here.
+fn build_augmented_path() -> String {
+    let mut dirs: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut push = |s: String, dirs: &mut Vec<String>, seen: &mut HashSet<String>| {
+        if !s.is_empty() && seen.insert(s.clone()) {
+            dirs.push(s);
+        }
+    };
+
+    // 1) Try the user's login shell PATH first — catches nvm/volta/custom prefixes.
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    if let Ok(out) = std::process::Command::new(&shell)
+        .args(["-ilc", "echo -n $PATH"])
+        .output()
+    {
+        if out.status.success() {
+            if let Ok(path) = String::from_utf8(out.stdout) {
+                for p in path.split(':') {
+                    push(p.to_string(), &mut dirs, &mut seen);
+                }
+            }
+        }
+    }
+
+    // 2) Hardcoded fallbacks for common npm-global / Homebrew / pipx locations.
+    let home = std::env::var("HOME").unwrap_or_default();
+    for p in [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+    ] {
+        push(p.to_string(), &mut dirs, &mut seen);
+    }
+    if !home.is_empty() {
+        for rel in [".local/bin", ".npm-global/bin", ".bun/bin", ".cargo/bin"] {
+            push(format!("{}/{}", home, rel), &mut dirs, &mut seen);
+        }
+    }
+
+    // 3) Append the existing inherited PATH so we never *lose* anything.
+    if let Ok(existing) = std::env::var("PATH") {
+        for p in existing.split(':') {
+            push(p.to_string(), &mut dirs, &mut seen);
+        }
+    }
+
+    dirs.join(":")
+}
 
 /// Configure WKWebView for optimal WebGL/3D rendering performance.
 /// Uses private WebKit APIs to enable hardware-accelerated drawing and compositing,
@@ -226,6 +282,12 @@ pub fn run() {
                 let shell = app.shell();
                 match shell.sidecar("binaries/catgo-server") {
                     Ok(cmd) => {
+                        // Augment PATH so the Python sidecar can discover user-installed
+                        // CLIs (claude, gemini, codex). macOS GUI apps run with a stripped
+                        // PATH that doesn't include npm/Homebrew/pipx bin dirs.
+                        let augmented_path = build_augmented_path();
+                        log::info!("[CatGo] Sidecar PATH: {}", augmented_path);
+                        let cmd = cmd.env("PATH", augmented_path);
                         match cmd.spawn() {
                             Ok((mut rx, child)) => {
                                 log::info!("[CatGo] Backend server started (sidecar)");
