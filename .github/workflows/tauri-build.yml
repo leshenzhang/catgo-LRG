@@ -114,9 +114,9 @@ jobs:
           wasm-pack build --target web --out-dir ../../src/lib/electronic/chgdiff-wasm-pkg
 
       - name: Generate documentation chunks
-        run: pnpm build:doc-chunks
+        run: pnpm run build:doc-chunks
 
-      - name: Verify WASM and Doc Chunks
+      - name: Verify generated build assets
         run: |
           ls -la extensions/rust-wasm/pkg/ferrox_bg.wasm
           ls -la src/lib/electronic/chgdiff-wasm-pkg/chgdiff_wasm_bg.wasm
