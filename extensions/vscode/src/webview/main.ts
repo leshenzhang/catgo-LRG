@@ -20,6 +20,8 @@ import { setMPApiBase } from '$lib/api/materials-project'
 // chain reported in issue #14.
 import { decompress_data, detect_compression_format } from '$lib/io/decompress'
 import { parse_structure_file } from '$lib/structure/parse'
+import { parse_cube_header, cube_atoms_to_molecule } from '$lib/cube/parse-cube'
+import { chgcar_to_cube } from '$lib/electronic/chgdiff-wasm'
 import Structure from '$lib/structure/Structure.svelte'
 import { apply_theme_to_dom, is_valid_theme_name, type ThemeName } from '$lib/theme/index'
 import '$lib/theme/themes'
@@ -53,6 +55,7 @@ export interface CatGoData {
   defaults?: DefaultSettings
   wasm_binary?: string // base64-encoded ferrox WASM binary from extension
   moyo_wasm_binary?: string // base64-encoded moyo WASM binary from extension
+  chgdiff_wasm_binary?: string // base64-encoded chgdiff WASM binary from extension
 }
 
 export interface ParseResult {
@@ -61,6 +64,8 @@ export interface ParseResult {
   filename: string
   // For trajectories that support VS Code streaming
   streaming_info?: { supports_streaming: boolean; file_path: string }
+  // Cube/CHGCAR file content for isosurface rendering in Structure component
+  cube_file?: File
 }
 
 export interface CatGoApp {
@@ -500,6 +505,47 @@ const parse_file_content = async (
     return { type: `trajectory`, data, filename }
   }
 
+  // Gaussian cube and VASP volumetric grid files: parse header for atoms +
+  // hand the cube text to the Structure component for isosurface rendering.
+  // Cube is matched by extension; CHGCAR-family (CHGCAR / CHGDIFF / DIFFCHG /
+  // CHGCAR_diff / AECCAR / LOCPOT / ELFCAR / PARCHG, with optional suffixes
+  // like .diff / _HCO2) is matched by name substring and converted to cube
+  // text via the chgdiff-wasm pipeline.
+  const is_cube = /\.(cube|cub)$/i.test(filename)
+  const stripped_basename = filename.replace(/\.(gz|bz2|xz|zst)$/i, ``)
+  const is_chgcar_family = !is_cube &&
+    /chgcar|chgdiff|diffchg|aeccar|locpot|elfcar|parchg/i.test(stripped_basename)
+  if (is_cube || is_chgcar_family) {
+    try {
+      const cube_text = is_cube ? content : await chgcar_to_cube(content)
+      const header = parse_cube_header(cube_text)
+      const molecule = cube_atoms_to_molecule(header)
+      if (!molecule.sites.length) {
+        throw new Error(`cube header had no atoms`)
+      }
+      const cube_filename = is_cube ? filename : `${filename}.cube`
+      const cube_blob = new Blob([cube_text], { type: `chemical/x-cube` })
+      const data = {
+        ...molecule,
+        _aligned: true,
+        id: filename.replace(/\.[^/.]+$/, ``),
+      } as unknown
+      return {
+        type: `structure`,
+        data,
+        filename,
+        cube_file: new File([cube_blob], cube_filename),
+      }
+    } catch (err) {
+      console.error(`[CatGO Webview] Failed to handle cube/CHGCAR file:`, err)
+      throw new Error(
+        `Failed to parse ${
+          is_chgcar_family ? `CHGCAR-family` : `cube`
+        } file: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
   // Parse as structure
   const structure = parse_structure_file(content, filename)
   if (!structure?.sites) {
@@ -592,6 +638,7 @@ const create_display = (
         ...structure_props(defaults),
         fullscreen_toggle: false,
         hidden_toolbar_items: ['terminal', 'chat', 'plugin_hub', 'gesture', 'workflow'],
+        ...(result.cube_file ? { cube_file: result.cube_file } : {}),
       }),
     allow_file_drop: false,
     style: `height: 100%; border-radius: 0`,
@@ -722,6 +769,22 @@ async function initialize() {
     }
   } else {
     console.log(`[CatGO Webview] No ferrox WASM binary provided by extension - will use web bundled version`)
+  }
+
+  // Stash chgdiff WASM binary for lazy init when a CHGCAR-family file is loaded.
+  // Lives on globalThis so $lib/electronic/chgdiff-wasm.ts can pick it up without
+  // an extension-specific import.
+  if (catgo_data?.chgdiff_wasm_binary) {
+    try {
+      console.log(`[CatGO Webview] Received chgdiff WASM binary (${catgo_data.chgdiff_wasm_binary.length} base64 chars)`)
+      const chgdiff_buffer = base64_to_array_buffer(catgo_data.chgdiff_wasm_binary)
+      ;(globalThis as unknown as { __catgo_chgdiff_wasm?: ArrayBuffer }).__catgo_chgdiff_wasm = chgdiff_buffer
+      console.log(`[CatGO Webview] Stashed chgdiff WASM binary on globalThis (${chgdiff_buffer.byteLength} bytes)`)
+    } catch (error) {
+      console.warn(`[CatGO Webview] Failed to decode chgdiff WASM binary:`, error)
+    }
+  } else {
+    console.log(`[CatGO Webview] No chgdiff WASM binary provided by extension - will fetch from bundled assets`)
   }
 
   // Initialize moyo WASM with binary data if provided by extension
