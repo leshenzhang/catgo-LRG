@@ -504,11 +504,12 @@
   }
 
   .controls button.info-btn {
-    background: var(--bg-secondary, #f5f5f5);
+    background: var(--btn-bg);
+    color: var(--btn-color);
   }
 
   .controls button.info-btn:hover:not(:disabled) {
-    background: var(--border-color, #ddd);
+    background: var(--btn-bg-hover);
   }
 
   .controls button.primary {
