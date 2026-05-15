@@ -47,7 +47,15 @@ export const create_structure = (
   force_data?: number[][],
   move_mask?: boolean[],
 ): AnyStructure => {
-  const inv_matrix = lattice_matrix ? get_inverse_matrix(lattice_matrix) : null
+  // Pymatgen / ASE convention: lattice_matrix rows are lattice vectors a, b, c.
+  // For column-vector multiplication (what mat3x3_vec3_multiply does), the
+  // correct cart→frac map is `frac = M^{-T} @ cart`, not `M^{-1} @ cart` —
+  // the two agree only for orthogonal cells. Inverting the transposed matrix
+  // here keeps the same code path correct for non-orthogonal (hex / triclinic)
+  // cells too.
+  const inv_matrix = lattice_matrix
+    ? math.matrix_inverse_3x3(math.transpose_3x3_matrix(lattice_matrix))
+    : null
   // Pre-compute fractional coords for all atoms so the wrap-decision pass
   // can do a near-neighbor check in raw Cartesian without re-deriving abc.
   const initial_abcs: Vec3[] = positions.map((pos) =>
@@ -118,7 +126,8 @@ export const create_structure = (
         abc[2] - Math.floor(abc[2]),
       ]
       abc = new_abc
-      xyz = math.mat3x3_vec3_multiply(lattice_matrix, new_abc)
+      // Same rows=lattice-vectors convention: cart = M^T @ frac (column form).
+      xyz = math.mat3x3_vec3_multiply(math.transpose_3x3_matrix(lattice_matrix), new_abc)
     }
     const properties: Record<string, unknown> = force_data?.[idx]
       ? { force: force_data[idx] as Vec3 }
