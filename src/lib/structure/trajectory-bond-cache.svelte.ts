@@ -220,14 +220,23 @@ export function wire_trajectory_bond_cache(
     cache.on_frame_change(idx, getter, base, deps.get_strategy(), deps.get_options())
   })
 
-  // Push the resolved connectivity into the caller's $state. Skip writes
-  // when content reference is unchanged.
+  // Push the resolved connectivity into the caller's $state. Skip writes when
+  // the content reference is unchanged. Use a closure-local `last_pushed`
+  // rather than `deps.get_connectivity()` so reading the current value doesn't
+  // re-subscribe this effect to the very state it writes — otherwise the write
+  // re-triggers the effect and Svelte 5 bails with `effect_update_depth_exceeded`
+  // (notably on tiny 2-frame trajectories where the cache version bumps before
+  // the dep graph settles).
+  let last_pushed: BondConnectivity[] | null = null
   $effect(() => {
     void cache.version
     let next: BondConnectivity[] | null = null
     if (deps.get_trajectory_active() && deps.get_step_idx() >= 0) {
       next = cache.get_best(deps.get_step_idx()) ?? null
     }
-    if (next !== deps.get_connectivity()) deps.set_connectivity(next)
+    if (next !== last_pushed) {
+      last_pushed = next
+      deps.set_connectivity(next)
+    }
   })
 }
