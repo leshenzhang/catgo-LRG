@@ -395,7 +395,6 @@ def generate_orca_irc_inputs(request: Any) -> Dict[str, str]:
     charge = request.charge or 0
     multiplicity = request.multiplicity or 1
     external_ts_file = getattr(request, 'external_ts_file', None)  # e.g., "NEB-TS_converged.xyz"
-    initial_displacement_energy = getattr(request, 'initial_displacement_energy', 2.0) or 2.0
 
     lines = []
 

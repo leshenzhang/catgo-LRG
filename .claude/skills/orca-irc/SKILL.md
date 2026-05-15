@@ -191,8 +191,7 @@ catgo_workflow(action: "batch", workflow_id: "<wf_id>", operations: [
      "charge": 0,
      "multiplicity": 1,
      "dispersion": "D3BJ",
-     "max_irc_iterations": 70,
-     "initial_displacement_energy": 2.0
+     "max_iterations": 70
    }},
   {"op": "connect", "from_id": "<structure_input_id>", "to_id": "irc1",
    "from_handle": "structure", "to_handle": "structure"}
@@ -208,11 +207,10 @@ catgo_workflow(action: "batch", workflow_id: "<wf_id>", operations: [
 | `charge` / `multiplicity` | 0 / 1 | |
 | `dispersion` | (none) | `D4` \| `D3BJ` \| `D3` — **use this field, NOT `extra_keywords`** |
 | `grid` | DefGrid2 | `DefGrid1/2/3` |
-| `max_irc_iterations` | 30 | per-arm iteration cap (alias: `max_iterations`) |
-| `initial_displacement_energy` | 2.0 | scales `Init_Displ_DE` |
+| `max_iterations` | 30 | per-arm iteration cap (legacy alias: `max_irc_iterations`) |
 | `num_cores` / `max_core_mb` | 4 / 4000 | `%pal nprocs` / `%maxcore` |
 
-> ⚠️ **Hessian-source params (`init_hess`, `irc_direction`, `irc_max_iter`, etc.) are not currently read by the IRC engine code path** ([server/workflow/engines/orca.py:218](server/workflow/engines/orca.py#L218)). The engine emits a minimal `%irc MaxIter ... end` block from `max_irc_iterations` only. To control Hessian source / direction you need to either (a) extend the node-def, or (b) skip the workflow engine and run ORCA directly on a hand-edited input file using the Stage 1 template above.
+> ⚠️ **Hessian-source / step-control params (`init_hess`, `irc_direction`, `Init_Displ_DE`, etc.) are not currently read by the IRC engine code path** ([server/workflow/engines/orca.py:218](server/workflow/engines/orca.py#L218)). The engine emits a minimal `%irc MaxIter ... end` block from `max_iterations` only. To control Hessian source, direction, or initial displacement, either (a) extend the node-def, or (b) skip the workflow engine and run ORCA directly on a hand-edited input file using the Stage 1 template above.
 
 ### 4. Run with the full HPC run_config
 

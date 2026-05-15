@@ -13,7 +13,7 @@ export const IRC_NODE: NodeDefinition = {
   description: `Intrinsic reaction coordinate`,
   inputs: [`structure`],
   outputs: [`trajectory`, `structures`],
-  default_params: { system_type: `molecular`, software: `orca`, method: `r2SCAN-3c`, basis: `6-31G`, max_iterations: 30, initial_displacement_energy: 2.0, charge: 0, multiplicity: 1 },
+  default_params: { system_type: `molecular`, software: `orca`, method: `r2SCAN-3c`, basis: `6-31G`, max_iterations: 30, charge: 0, multiplicity: 1 },
   help_text: `**IRC** — Trace reaction path from transition state.
 
 Intrinsic Reaction Coordinate (IRC) follows the steepest descent path from a TS to the nearest minima (reactant and product).`,
@@ -124,10 +124,6 @@ Intrinsic Reaction Coordinate (IRC) follows the steepest descent path from a TS 
       {
         key: `max_iterations`, label: `Max IRC Steps`, type: `number`, default: 30, group: `IRC`, min: 10, max: 100,
         help: `Maximum IRC path-following steps.`,
-      },
-      {
-        key: `initial_displacement_energy`, label: `Initial Displacement Energy (mEh)`, type: `number`, default: 2.0, group: `IRC`, min: 0.5, max: 10.0, step: 0.5,
-        help: `Initial IRC step size (mEh). 2.0 typical.`,
       },
       {
         key: `uno`, label: `Generate Natural Orbitals (UNO)`, type: `boolean`, default: false, group: `Output`,

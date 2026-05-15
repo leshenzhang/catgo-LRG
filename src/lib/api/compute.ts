@@ -671,7 +671,6 @@ export interface OrcaIrcInputRequest {
   method?: ORCAMethod
   basis?: ORCABasisSet
   max_iterations?: number
-  initial_displacement_energy?: number
   num_cores?: number
   charge?: number
   multiplicity?: number

@@ -2793,11 +2793,12 @@ def _preview_orca_input(node_type: str, params: dict, structure_json: str | None
         req = types.SimpleNamespace(
             structure=_parse_structure_json(structure_json),
             method=params.get("method", "r2SCAN-3c"),
-            basis=params.get("basis", "6-31G"),
+            basis=params.get("basis_set") or params.get("basis") or "6-31G",
             charge=params.get("charge", 0),
             multiplicity=params.get("multiplicity", 1),
-            max_iterations=params.get("max_iterations", 30),
-            initial_displacement_energy=params.get("initial_displacement_energy", 2.0),
+            max_iterations=params.get(
+                "max_iterations", params.get("max_irc_iterations", 30)
+            ),
             num_cores=params.get("num_cores", 4),
             max_core_mb=params.get("max_core_mb", 4000),
             wavefunction=params.get("wavefunction", None),
