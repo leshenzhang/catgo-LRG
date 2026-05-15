@@ -61,9 +61,18 @@ binary, so end users don't need Bun.)
   console.log(`[agent:dev] Bun installed at ${bun}. Continuing...`)
 }
 
+// Some lab / corp networks hang Node.js fetch (undici) when the DNS
+// resolver hands back AAAA first and the IPv6 path is broken. Forcing
+// IPv4-first on the runtime + Bun avoids the silent stall that
+// otherwise makes CatBot's workflow generation "freeze ~50% of the
+// time" on those hosts. Harmless on healthy networks.
 const child = spawn(bun, [`run`, ENTRY], {
   stdio: 'inherit',
-  env: process.env,
+  env: {
+    ...process.env,
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ``} --dns-result-order=ipv4first`.trim(),
+    BUN_DNS_ORDER: `ipv4first`,
+  },
 })
 child.on('exit', (code, signal) => {
   if (signal) {

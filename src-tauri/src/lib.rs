@@ -332,7 +332,14 @@ pub fn run() {
                         let cmd = cmd
                             .env("CATGO_AGENT_PORT", &agent_port)
                             .env("CATGO_BACKEND_PORT", &port)
-                            .env("PATH", &augmented_path);
+                            .env("PATH", &augmented_path)
+                            // Force IPv4-first DNS so Node's `fetch` (undici)
+                            // doesn't stall on hosts whose IPv6 path is broken
+                            // — symptom: CatBot workflow generation freezes
+                            // ~50% of the time on certain lab / corp networks.
+                            // Harmless on healthy networks.
+                            .env("NODE_OPTIONS", "--dns-result-order=ipv4first")
+                            .env("BUN_DNS_ORDER", "ipv4first");
                         match cmd.spawn() {
                             Ok((mut rx, child)) => {
                                 log::info!("[CatGo] Agent bridge started (sidecar) on port {}", agent_port);
