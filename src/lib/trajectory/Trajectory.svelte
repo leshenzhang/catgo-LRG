@@ -1277,16 +1277,25 @@
       }
       case 'manipulate': {
         if (!structure?.sites) return structure
-        const disps = op.displacements
-        const new_sites = structure.sites.map((site, idx) => {
-          const d = disps.get(idx)
-          if (!d) return site
-          return {
-            ...site,
-            xyz: [site.xyz[0] + d[0], site.xyz[1] + d[1], site.xyz[2] + d[2]] as Vec3,
-          }
-        })
-        return { ...structure, sites: new_sites }
+        // Same xyz+abc delta-add primitive as the directly-committed current
+        // frame, so fanned-out frames stay consistent for fractional export.
+        let inv_flat:
+          | [number, number, number, number, number, number, number, number, number]
+          | null = null
+        if (`lattice` in structure && (structure as PymatgenStructure).lattice) {
+          const li = matrix_inverse_3x3(
+            transpose_3x3_matrix((structure as PymatgenStructure).lattice.matrix),
+          )
+          inv_flat = [
+            li[0][0], li[0][1], li[0][2],
+            li[1][0], li[1][1], li[1][2],
+            li[2][0], li[2][1], li[2][2],
+          ]
+        }
+        return {
+          ...structure,
+          sites: apply_displacements(structure.sites, op.displacements, inv_flat),
+        }
       }
     }
   }
@@ -1443,7 +1452,9 @@
       const new_sites = apply_displacements(cur.structure.sites, displacements, inv_flat)
       frames[idx] = { ...cur, structure: { ...cur.structure, sites: new_sites } }
       // Mirror straight into the render source so Phase-2 GPU + bond getter
-      // see the edit synchronously (no snap-back window).
+      // see the edit. The snap-back window is fully closed once Task 6
+      // reorders interaction.svelte.ts to fire this BEFORE clearing
+      // realtime_position_overrides.
       const slice = position_cache?.[idx]
       if (slice) write_sites_to_cache_slice(slice, new_sites)
     }
