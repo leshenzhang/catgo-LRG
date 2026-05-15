@@ -209,6 +209,10 @@ export function wire_trajectory_bond_cache(
     get_options: () => Record<string, number>
     set_connectivity: (v: BondConnectivity[] | null) => void
     get_connectivity: () => BondConnectivity[] | null
+    /** Optional. Bumps when the CURRENT frame's positions change in place
+     *  (atom edit) without step_idx moving — forces a recompute the
+     *  last_idx guard would otherwise skip. */
+    get_positions_version?: () => number
   },
 ): void {
   // Reset cache on actual value changes (not parent-render proxy churn).
@@ -287,16 +291,29 @@ export function wire_trajectory_bond_cache(
   // scene_props / structure and refires this effect, which kicks another
   // bond-worker request, which spreads again, and Svelte 5's flush
   // overflow guard kicks in.
+  let last_pos_version = -1
   $effect(() => {
     const idx = deps.get_step_idx()
+    const pv = deps.get_positions_version?.() ?? 0
     if (idx < 0) return
-    if (idx === last_idx) return
+    const idx_moved = idx !== last_idx
+    const pos_changed = pv !== last_pos_version
+    if (!idx_moved && !pos_changed) return
     untrack(() => {
       const getter = deps.get_positions()
       const base = deps.get_base()
       if (!getter || !base) return
       last_idx = idx
-      cache.on_frame_change(idx, getter, base, deps.get_strategy(), deps.get_options())
+      last_pos_version = pv
+      // A same-frame in-place edit must recompute THIS frame even though
+      // idx didn't move — invalidate then request (on_frame_change's cache
+      // hit-check would otherwise early-return).
+      if (pos_changed && !idx_moved) {
+        cache.invalidate(idx)
+        cache.request(idx, getter, base, deps.get_strategy(), deps.get_options())
+      } else {
+        cache.on_frame_change(idx, getter, base, deps.get_strategy(), deps.get_options())
+      }
     })
   })
 
