@@ -172,8 +172,10 @@ export class TrajectoryBondCache {
   }
 
   /** Drop one frame's cached connectivity (position-aware invalidation —
-   *  use after an in-place atom edit on that frame). Voids any inflight
-   *  compute for it and bumps `version` so consumers re-pull. */
+   *  use after an in-place atom edit on that frame). The `generation++` is
+   *  global: it voids ALL in-flight computes (any frame), not just this one
+   *  — matches `clear()`'s coarse model and is acceptable for the edit case.
+   *  `version++` drives consumers to re-pull. */
   invalidate(frame_idx: number): void {
     this.cache.delete(frame_idx)
     this.inflight.delete(frame_idx)
@@ -181,13 +183,11 @@ export class TrajectoryBondCache {
     this.version++
   }
 
-  /** Drop every frame (edit-all scope). Cheaper than `clear()`-then-rebuild
-   *  semantically identical here, but named for intent at call sites. */
+  /** Drop every frame (edit-all scope). Delegates to `clear()` — named
+   *  separately for intent at call sites; do not inline (keeps the
+   *  invalidation invariant single-sourced in `clear()`). */
   invalidate_all(): void {
-    this.cache.clear()
-    this.inflight.clear()
-    this.generation++
-    this.version++
+    this.clear()
   }
 }
 
