@@ -260,6 +260,38 @@ test.describe(`Trajectory Component`, () => {
     }
   })
 
+  test(`atom manipulation persists on the current frame (no snap-back)`, async ({ page }) => {
+    // Regression for issue #11: dragging/rotating an atom on a trajectory
+    // snapped back because handle_atoms_manipulated skipped the current
+    // frame, leaving position_cache[current_step_idx] (the source the
+    // Architecture-P GPU path reads) stale.
+    await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+
+    const before = await page.evaluate(
+      () => (globalThis as unknown as { __catgo_traj_test?: { get_current_frame_x0(): number | null } })
+        .__catgo_traj_test?.get_current_frame_x0() ?? null,
+    )
+    expect(before, `DEV test API present + atom 0 readable`).not.toBeNull()
+
+    await page.evaluate(
+      () => (globalThis as unknown as { __catgo_traj_test?: { trigger_atoms_manipulated(): void } })
+        .__catgo_traj_test?.trigger_atoms_manipulated(),
+    )
+    // chunked apply ends with a trajectory spread; allow a tick.
+    await page.waitForTimeout(150)
+
+    const after = await page.evaluate(
+      () => (globalThis as unknown as { __catgo_traj_test?: { get_current_frame_x0(): number | null } })
+        .__catgo_traj_test?.get_current_frame_x0() ?? null,
+    )
+    // Displacement applied to atom 0 is [0.01, 0, 0]; the current frame must
+    // reflect it rather than retaining the pre-edit coordinate.
+    expect(after, `current-frame atom 0 x moved by +0.01`).toBeCloseTo(
+      (before as number) + 0.01,
+      6,
+    )
+  })
+
   test.describe(`layout and configuration options`, () => {
     test(`layout classes are correct based on viewport and props`, async ({ page }) => {
       // Auto layout should be horizontal when container is wide

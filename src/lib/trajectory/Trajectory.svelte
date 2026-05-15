@@ -236,6 +236,16 @@
       trigger_atoms_manipulated: () => handle_atoms_manipulated({
         displacements: new Map([[0, [0.01, 0, 0]]]),
       } as AtomManipulationEvent),
+      // Snap-back regression probes: atom-0 x for the *current* frame, read
+      // from the two sources the bug left stale — the frame structure and
+      // the Architecture-P position cache slice that feeds the GPU.
+      get_current_frame_x0(): number | null {
+        return trajectory?.frames?.[current_step_idx]?.structure?.sites?.[0]?.xyz?.[0] ?? null
+      },
+      get_cache_x0(): number | null {
+        const slice = position_cache?.[current_step_idx]
+        return slice ? slice[0] : null
+      },
     }
     ;(globalThis as { __catgo_traj_test?: typeof api }).__catgo_traj_test = api
     return () => {
@@ -1401,6 +1411,17 @@
 
     // Fast path: in-place mutation with inline position cache update.
     // Avoids all object allocation — just mutates xyz/abc arrays directly.
+    //
+    // The current frame is NOT skipped. Under the Architecture-P fast-path
+    // the displayed atom positions come from `position_cache[current_step_idx]`
+    // (fed to the GPU by Structure.svelte's Phase-2 write loop), NOT from the
+    // eager `current_structure` the drag-commit path mutates. Skipping the
+    // current frame here leaves its cache slice stale, so once
+    // `realtime_position_overrides` clears at pointer-up, Phase-2 re-asserts
+    // the pre-drag coords → the dragged atom snaps back. The eager path only
+    // ever wrote `current_structure` (a separate object), never `frames[]`
+    // or `position_cache`, so applying the displacement to the current frame
+    // here is a single net move, not a double-apply.
     const frames = trajectory.frames
     const skip = current_step_idx
     const cache = position_cache
@@ -1427,7 +1448,6 @@
     function process_chunk() {
       const end = Math.min(pos + CHUNK, frames.length)
       for (let fi = pos; fi < end; fi++) {
-        if (fi === skip) continue
         const sites = frames[fi].structure.sites
         const cache_arr = cache?.[fi]
 
