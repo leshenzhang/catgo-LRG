@@ -1039,7 +1039,29 @@ async def parse_orca_irc_progress(
     safe_dir = shlex.quote(work_dir)
     orca_out = f"{safe_dir}/ORCA.out"
 
-    content = await read_orca_output(conn, orca_out, max_bytes=100_000)
+    # IRC writes a FORWARD section then a BACKWARD section sequentially into a
+    # single output file. A fixed tail window drops the FORWARD header once the
+    # file grows past that window, so we anchor the read at the FORWARD header
+    # and stream to EOF (capped) when present. Falls back to a tail read while
+    # the header has not yet been written.
+    IRC_MAX_BYTES = 5 * 1024 * 1024
+    anchored_cmd = (
+        f"if grep -q 'FORWARD IRC' {orca_out} 2>/dev/null; then "
+        f"sed -n '/FORWARD IRC/,$p' {orca_out} | head -c {IRC_MAX_BYTES}; "
+        f"else tail -c 100000 {orca_out} 2>/dev/null; fi"
+    )
+    try:
+        result = await asyncio.wait_for(
+            conn.run(anchored_cmd, check=False),
+            timeout=30.0,
+        )
+        content = result.stdout or ""
+    except asyncio.TimeoutError:
+        logger.warning("Timed out reading IRC output from %s after 30s", orca_out)
+        content = await read_orca_output(conn, orca_out, max_bytes=100_000)
+    except Exception as e:
+        logger.warning("Failed anchored IRC read from %s: %s", orca_out, e)
+        content = await read_orca_output(conn, orca_out, max_bytes=100_000)
     if not content:
         return ConvergenceData(success=False, message="ORCA.out not found or empty")
 
