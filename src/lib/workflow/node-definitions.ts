@@ -1757,10 +1757,6 @@ Intrinsic Reaction Coordinate (IRC) follows the steepest descent path from a TS 
           help: `Maximum IRC path-following steps.`,
         },
         {
-          key: `initial_displacement_energy`, label: `Initial Displacement Energy (mEh)`, type: `number`, default: 2.0, group: `IRC`, min: 0.5, max: 10.0, step: 0.5,
-          help: `Initial IRC step size (mEh). 2.0 typical.`,
-        },
-        {
           key: `uno`, label: `Generate Natural Orbitals (UNO)`, type: `boolean`, default: false, group: `Output`,
           help: `Generate natural orbitals and occupation numbers.`,
         },

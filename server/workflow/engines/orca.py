@@ -187,12 +187,16 @@ def generate_orca_input_files(
                     )
                 product_struct = _structure_to_pymatgen_dict(product_struct_obj)
 
+            # NEB-TS UI defaults to r2SCAN-3c / 6-31G; override the opt/sp-style
+            # defaults computed at the top so the engine matches the preview.
+            neb_method = params.get("method") or "r2SCAN-3c"
+            neb_basis = params.get("basis_set") or params.get("basis") or "6-31G"
             request = OrcaNebInputRequest(
                 structure_reactant=pymatgen_struct,
                 structure_product=product_struct,
-                method=method,
-                basis_set=basis_set,
-                basis=basis_set,
+                method=neb_method,
+                basis_set=neb_basis,
+                basis=neb_basis,
                 charge=charge,
                 multiplicity=multiplicity,
                 wavefunction=wavefunction,
@@ -216,12 +220,24 @@ def generate_orca_input_files(
             neb_files["product"] = params.get("custom_product_xyz") or result.get("product_xyz", "")
 
         elif node_type == "orca_irc":
-            # IRC requires transition state structure
+            # IRC defaults differ from opt/sp/freq (see node-definitions.ts
+            # `irc` entry): method=r2SCAN-3c, basis=6-31G. Override the
+            # opt/sp-style defaults computed at the top of this function so the
+            # engine matches what the preview generator emits.
+            irc_method = params.get("method") or "r2SCAN-3c"
+            irc_basis = params.get("basis_set") or params.get("basis") or "6-31G"
+            # UI form writes Max IRC Steps under `max_iterations`. Read that
+            # first; fall back to legacy `max_irc_iterations` for MCP/skill
+            # callers that still use the old name.
+            irc_max_iter = params.get(
+                "max_iterations",
+                params.get("max_irc_iterations", 30),
+            )
             request = OrcaIrcInputRequest(
                 structure=pymatgen_struct,
-                method=method,
-                basis_set=basis_set,
-                basis=basis_set,
+                method=irc_method,
+                basis_set=irc_basis,
+                basis=irc_basis,
                 charge=charge,
                 multiplicity=multiplicity,
                 wavefunction=wavefunction,
@@ -230,11 +246,7 @@ def generate_orca_input_files(
                 dispersion=params.get("dispersion") or None,
                 three_body_dispersion=params.get("three_body_dispersion", False),
                 grid=params.get("grid") or None,
-                max_iterations=params.get("max_irc_iterations", 30),
-                initial_displacement_energy=params.get(
-                    "initial_displacement_energy",
-                    params.get("initial_displacement", 2.0)
-                ),
+                max_iterations=irc_max_iter,
                 num_cores=num_cores,
                 max_core_mb=max_core_mb,
             )

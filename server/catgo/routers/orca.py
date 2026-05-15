@@ -68,7 +68,6 @@ class OrcaIrcInputRequest(BaseModel):
     three_body_dispersion: Optional[bool] = False
     grid: Optional[str] = None
     max_iterations: Optional[int] = 30
-    initial_displacement_energy: Optional[float] = 2.0
     num_cores: Optional[int] = 4
     max_core_mb: Optional[int] = 4000
     charge: Optional[int] = 0

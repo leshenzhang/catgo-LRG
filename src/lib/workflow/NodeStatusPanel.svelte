@@ -1896,10 +1896,18 @@
         <div class="sp-section">
           <div class="sp-section-title">Live Monitoring</div>
           {#if node_type === `irc` || node_type === `orca_irc`}
-            {#if convergence && convergence.points.length >= 2}
+            {@const live_irc_points = (convergence && convergence.points.length >= 2)
+              ? convergence.points
+              : (cached_summary.convergence_points && cached_summary.convergence_points.length >= 2
+                  ? cached_summary.convergence_points
+                  : null)}
+            {@const live_irc_thresholds = convergence?.convergence_thresholds
+              ?? cached_summary.convergence_thresholds
+              ?? { max_grad: 0.002, rms_grad: 0.0005 }}
+            {#if live_irc_points}
               <IrcPathPlot
-                points={convergence.points as unknown as Array<{ step: number | string; [key: string]: unknown }>}
-                convergence_thresholds={convergence.convergence_thresholds ?? { max_grad: 0.002, rms_grad: 0.0005 }}
+                points={live_irc_points as unknown as Array<{ step: number | string; [key: string]: unknown }>}
+                convergence_thresholds={live_irc_thresholds}
               />
             {:else}
               <div class="sp-ssh-hint">
