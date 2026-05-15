@@ -1,9 +1,9 @@
 /**
  * Pure trajectory-edit primitives. No Svelte, no side effects — unit-testable.
  *
- * `applyDisplacements` is the single position-edit operation both the
+ * `apply_displacements` is the single position-edit operation both the
  * edit-current and edit-all scopes use (issue #51 "single write path").
- * `writeSitesToCacheSlice` mirrors a frame's sites into its `position_cache`
+ * `write_sites_to_cache_slice` mirrors a frame's sites into its `position_cache`
  * Float32Array so the renderer + bond pipeline see the edit synchronously.
  */
 
@@ -32,7 +32,7 @@ function mat3_vec3(m: Mat3Flat, v: Vec3): Vec3 {
  * row-major flat 9) converts the cartesian Δ to a fractional Δ; pass `null`
  * for non-periodic / when abc should track the cartesian Δ directly.
  */
-export function applyDisplacements<T extends EditSite>(
+export function apply_displacements<T extends EditSite>(
   sites: readonly T[],
   displacements: ReadonlyMap<number, Vec3>,
   inv_lattice: Mat3Flat | null,
@@ -42,6 +42,10 @@ export function applyDisplacements<T extends EditSite>(
     const d = displacements.get(i)
     if (!d) return s
     const fd = inv_lattice ? mat3_vec3(inv_lattice, d) : d
+    // Delta-add (abc + inv·Δ) is intentional, NOT a full recompute like
+    // `apply_per_atom_displacements` (new_abc = inv·new_xyz): it preserves the
+    // user's wrapped/unwrapped fractional coords and avoids re-wrap surprises
+    // during trajectory edits — do not "align" this to the full-recompute form.
     return {
       ...s,
       xyz: [s.xyz[0] + d[0], s.xyz[1] + d[1], s.xyz[2] + d[2]] as Vec3,
@@ -51,7 +55,7 @@ export function applyDisplacements<T extends EditSite>(
 }
 
 /** Mirror sites' xyz into a position-cache Float32Array slice, in place. */
-export function writeSitesToCacheSlice(
+export function write_sites_to_cache_slice(
   slice: Float32Array,
   sites: readonly { xyz: Vec3 }[],
 ): void {
