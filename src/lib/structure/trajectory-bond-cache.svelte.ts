@@ -170,6 +170,25 @@ export class TrajectoryBondCache {
     this.generation++
     this.version++
   }
+
+  /** Drop one frame's cached connectivity (position-aware invalidation —
+   *  use after an in-place atom edit on that frame). Voids any inflight
+   *  compute for it and bumps `version` so consumers re-pull. */
+  invalidate(frame_idx: number): void {
+    this.cache.delete(frame_idx)
+    this.inflight.delete(frame_idx)
+    this.generation++
+    this.version++
+  }
+
+  /** Drop every frame (edit-all scope). Cheaper than `clear()`-then-rebuild
+   *  semantically identical here, but named for intent at call sites. */
+  invalidate_all(): void {
+    this.cache.clear()
+    this.inflight.clear()
+    this.generation++
+    this.version++
+  }
 }
 
 /** Create a reactive instance of the bond cache. */
