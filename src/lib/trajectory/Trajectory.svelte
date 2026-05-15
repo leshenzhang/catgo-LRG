@@ -10,7 +10,7 @@
   import { add_atom, delete_atoms, replace_atom } from '$lib/structure'
   import type { AtomManipulationEvent } from '$lib/structure'
   import type { AnyStructure, PymatgenStructure } from '$lib/structure'
-  import { type Matrix3x3, mat3x3_vec3_multiply, matrix_inverse_3x3, transpose_3x3_matrix } from '$lib/math'
+  import { type Matrix3x3, matrix_inverse_3x3, transpose_3x3_matrix } from '$lib/math'
   import { writeRemoteFile } from '$lib/api/hpc'
   import { structure_to_poscar_str } from '$lib/structure/export'
   import { handle_url_drop, load_from_url } from '$lib/io'
@@ -57,6 +57,7 @@
     clamp_fps,
     get_keyboard_action,
   } from './trajectory-controls'
+  import { apply_displacements, write_sites_to_cache_slice } from './edit-apply'
 
   type EventHandlers = {
     on_play?: (data: TrajHandlerData) => void
@@ -236,6 +237,15 @@
       trigger_atoms_manipulated: () => handle_atoms_manipulated({
         displacements: new Map([[0, [0.01, 0, 0]]]),
       } as AtomManipulationEvent),
+      get edit_mode(): string { return edit_mode },
+      set_edit_mode(m: 'view' | 'edit-current' | 'edit-all') { edit_mode = m },
+      get_frame_x0(frame_idx: number): number | null {
+        return trajectory?.frames?.[frame_idx]?.structure?.sites?.[0]?.xyz?.[0] ?? null
+      },
+      get_current_idx(): number { return current_step_idx },
+      get_current_frame_x0(): number | null {
+        return trajectory?.frames?.[current_step_idx]?.structure?.sites?.[0]?.xyz?.[0] ?? null
+      },
     }
     ;(globalThis as { __catgo_traj_test?: typeof api }).__catgo_traj_test = api
     return () => {
@@ -1232,6 +1242,12 @@
   let pending_ops     = $state<PendingOp[]>([])
   let frame_op_cursor = $state<number[]>([])
 
+  // Bumped whenever the CURRENT frame's positions change in place (atom
+  // edit). Passed to <Structure> → bond-cache driver so bonds recompute
+  // even though current_step_idx didn't move (issue #51 bond defect).
+  // `all` = drop every frame's bond cache (edit-all fan-out), else just idx.
+  let trajectory_positions_version = $state<{ v: number; all: boolean }>({ v: 0, all: false })
+
   // Keep `frame_op_cursor` length in sync with `trajectory.frames.length`.
   // The only way the frame count changes in steady state is a brand-new
   // trajectory being loaded — in that case the old queue is stale and we
@@ -1395,82 +1411,63 @@
     const { displacements } = event
     if (displacements.size === 0) return
 
-    if (!_can_cross_frame_edit()) {
+    // view mode: edits disabled. (Edits shouldn't fire, but guard anyway —
+    // never silently mutate while the user is in inspect mode.)
+    if (edit_mode === `view`) return
+    if (!_is_in_memory()) {
+      // Indexed/streaming: positions live in frame.structure already (slow
+      // path writes current_structure = frame.structure each frame). Just
+      // refresh so the change is observed.
       trajectory = { ...trajectory }
       return
     }
 
-    // Drag is still the eager in-place path — make sure any pending queue
-    // ops are applied first so we mutate fresh structures. No-op while the
-    // queue is empty (Phases A–G).
-    flush_pending_ops()
-
-    // Fast path: in-place mutation with inline position cache update.
-    // Avoids all object allocation — just mutates xyz/abc arrays directly.
     const frames = trajectory.frames
-    const skip = current_step_idx
-    const cache = position_cache
+    const idx = current_step_idx
 
-    // Precompute inverse lattice matrix once (shared across all frames with same lattice)
-    let inv_matrix: Matrix3x3 | null = null
-    const sample_idx = skip === 0 ? 1 : 0
-    const sample = materialize_frame(sample_idx) ?? frames[sample_idx]?.structure
-    if (sample && `lattice` in sample && sample.lattice) {
-      const lat = (sample as PymatgenStructure).lattice
-      inv_matrix = matrix_inverse_3x3(transpose_3x3_matrix(lat.matrix))
+    // Build inverse-lattice once (cartesian Δ → fractional Δ for abc).
+    let inv: Matrix3x3 | null = null
+    const ref = frames[idx]?.structure
+    if (ref && `lattice` in ref && (ref as PymatgenStructure).lattice) {
+      const lat = (ref as PymatgenStructure).lattice
+      inv = matrix_inverse_3x3(transpose_3x3_matrix(lat.matrix))
+    }
+    const inv_flat = inv
+      ? [inv[0][0], inv[0][1], inv[0][2], inv[1][0], inv[1][1], inv[1][2], inv[2][0], inv[2][1], inv[2][2]] as
+        [number, number, number, number, number, number, number, number, number]
+      : null
+
+    // ── Single write path: always commit the CURRENT frame first ──────────
+    const cur = frames[idx]
+    if (cur?.structure?.sites) {
+      const new_sites = apply_displacements(cur.structure.sites, displacements, inv_flat)
+      frames[idx] = { ...cur, structure: { ...cur.structure, sites: new_sites } }
+      // Mirror straight into the render source so Phase-2 GPU + bond getter
+      // see the edit synchronously (no snap-back window).
+      const slice = position_cache?.[idx]
+      if (slice) write_sites_to_cache_slice(slice, new_sites)
     }
 
-    // Precompute per-atom displacement entries and their fractional equivalents (computed once, reused for every frame)
-    const disp_entries: [number, Vec3][] = [...displacements.entries()]
-    const frac_disps: Vec3[] = disp_entries.map(([, d]) =>
-      inv_matrix ? mat3x3_vec3_multiply(inv_matrix, d) : d,
-    )
-
-    const CHUNK = 2000 // large chunks — each frame is just a few additions
-    let pos = 0
-    cross_frame_busy = true
-
-    function process_chunk() {
-      const end = Math.min(pos + CHUNK, frames.length)
-      for (let fi = pos; fi < end; fi++) {
-        if (fi === skip) continue
-        const sites = frames[fi].structure.sites
-        const cache_arr = cache?.[fi]
-
-        for (let di = 0; di < disp_entries.length; di++) {
-          const [atom_idx] = disp_entries[di]
-          const site = sites[atom_idx]
-          if (!site) continue
-          const disp = disp_entries[di][1]
-          const frac = frac_disps[di]
-
-          // In-place xyz mutation
-          site.xyz[0] += disp[0]
-          site.xyz[1] += disp[1]
-          site.xyz[2] += disp[2]
-
-          // In-place abc mutation
-          site.abc[0] += frac[0]
-          site.abc[1] += frac[1]
-          site.abc[2] += frac[2]
-
-          // Inline position cache update — skip the $effect rebuild
-          if (cache_arr) {
-            cache_arr[atom_idx * 3] = site.xyz[0]
-            cache_arr[atom_idx * 3 + 1] = site.xyz[1]
-            cache_arr[atom_idx * 3 + 2] = site.xyz[2]
-          }
-        }
-      }
-      pos = end
-      if (pos < frames.length) {
-        setTimeout(process_chunk, 0)
-      } else {
-        if (trajectory) trajectory = { ...trajectory }
-        cross_frame_busy = false
-      }
+    if (edit_mode === `edit-current`) {
+      // Signal bond pipeline THIS frame changed (drop only idx's cache).
+      trajectory_positions_version = { v: trajectory_positions_version.v + 1, all: false }
+      // Other frames stay independent (use-case 2).
+      trajectory = { ...trajectory }
+      return
     }
-    process_chunk()
+
+    // ── edit-all: fan out lazily via the pending-ops machinery ────────────
+    // (use-case 3: many frames, must not freeze). Other frames materialize
+    // their copy of this displacement on next read (scrub / export / flush)
+    // exactly like the proven `delete` path. The current frame is already
+    // committed above, so record the op with its cursor pre-advanced past
+    // the current frame.
+    enqueue_pending_op({ kind: `manipulate`, displacements: new Map(displacements) })
+    frame_op_cursor[idx] = pending_ops.length // current frame already applied
+    // Drop EVERY frame's bond cache (lazy recompute via keyframe/prefetch
+    // scheduler keeps long trajectories smooth).
+    trajectory_positions_version = { v: trajectory_positions_version.v + 1, all: true }
+    trajectory = { ...trajectory }
   }
 
   function handle_atom_added(event: { element: ElementSymbol; position: Vec3 }) {
@@ -1881,6 +1878,7 @@
           {trajectory_frame_positions}
           {trajectory_frame_forces}
           trajectory_step_idx={current_step_idx}
+          trajectory_positions_version={trajectory_positions_version}
           get_trajectory_frame_positions={(i: number) => position_cache?.[i] ?? null}
           allow_file_drop={false}
           style="height: 100%; min-height: 0; z-index: 3; border-radius: 0"

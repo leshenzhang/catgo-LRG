@@ -213,6 +213,9 @@ export function wire_trajectory_bond_cache(
      *  (atom edit) without step_idx moving — forces a recompute the
      *  last_idx guard would otherwise skip. */
     get_positions_version?: () => number
+    /** Optional. When the positions-version bump represents an edit-all
+     *  fan-out, drop EVERY frame's bond cache rather than just `idx`. */
+    get_positions_invalidate_all?: () => boolean
   },
 ): void {
   // Reset cache on actual value changes (not parent-render proxy churn).
@@ -309,7 +312,8 @@ export function wire_trajectory_bond_cache(
       // idx didn't move — invalidate then request (on_frame_change's cache
       // hit-check would otherwise early-return).
       if (pos_changed && !idx_moved) {
-        cache.invalidate(idx)
+        if (deps.get_positions_invalidate_all?.()) cache.invalidate_all()
+        else cache.invalidate(idx)
         cache.request(idx, getter, base, deps.get_strategy(), deps.get_options())
       } else {
         cache.on_frame_change(idx, getter, base, deps.get_strategy(), deps.get_options())
