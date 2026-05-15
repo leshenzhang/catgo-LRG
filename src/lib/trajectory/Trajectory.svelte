@@ -1200,7 +1200,8 @@
   let fullscreen = $state(false)
 
   // Cross-frame editing: apply atom manipulations to all frames
-  let cross_frame_edit = $state(true)
+  type EditMode = 'view' | 'edit-current' | 'edit-all'
+  let edit_mode = $state<EditMode>('edit-current')
   let cross_frame_busy = $state(false)
 
   // ─── Pending cross-frame ops (lazy materialization) ───
@@ -1377,11 +1378,16 @@
     process_chunk()
   }
 
-  /** Guard: cross-frame edit enabled and trajectory is in-memory */
-  function _can_cross_frame_edit(): boolean {
-    if (!trajectory || !cross_frame_edit) return false
+  /** True when this trajectory is in-memory (frames mutable, position_cache
+   *  usable). Indexed/streaming trajectories have a frame_loader. */
+  function _is_in_memory(): boolean {
+    if (!trajectory) return false
     // @ts-expect-error - frame_loader is added dynamically for indexed/streaming trajectories
     return !trajectory.frame_loader
+  }
+  /** Back-compat alias kept for any other callers; edit-all == old ON. */
+  function _can_cross_frame_edit(): boolean {
+    return edit_mode === 'edit-all' && _is_in_memory()
   }
 
   function handle_atoms_manipulated(event: AtomManipulationEvent) {
@@ -1729,21 +1735,29 @@
                 {/if}
               </button>
             {/if}
-            <!-- Cross-frame editing toggle -->
+            <!-- Edit-scope mode: view → edit-current → edit-all -->
             <button
               type="button"
-              onclick={() => (cross_frame_edit = !cross_frame_edit)}
-              title={cross_frame_edit
-                ? `Cross-frame editing ON: atom manipulations apply to all frames`
-                : `Cross-frame editing OFF: atom manipulations apply to current frame only`}
+              onclick={() => {
+                edit_mode = edit_mode === `view`
+                  ? `edit-current`
+                  : edit_mode === `edit-current`
+                  ? `edit-all`
+                  : `view`
+              }}
+              title={edit_mode === `view`
+                ? `View only — scrubbing fast, atom edits disabled`
+                : edit_mode === `edit-current`
+                ? `Edit current frame only`
+                : `Edit all frames (sync) — applies to every frame`}
               class="cross-frame-toggle"
-              class:active={cross_frame_edit}
+              class:active={edit_mode !== `view`}
               disabled={cross_frame_busy}
             >
               {#if cross_frame_busy}
                 <Spinner style="width: 14px; height: 14px;" />
               {:else}
-                <Icon icon="Link" />
+                {edit_mode === `view` ? `👁` : edit_mode === `edit-current` ? `✏️1` : `✏️∀`}
               {/if}
             </button>
             {#if trajectory}
