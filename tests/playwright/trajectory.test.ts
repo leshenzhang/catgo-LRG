@@ -985,6 +985,78 @@ test.describe(`Trajectory Component`, () => {
       check_ratios(vertical_dims, `width`)
     })
   })
+
+  test.describe(`edit architecture (issue #51)`, () => {
+    const api = `(globalThis).__catgo_traj_test`
+
+    test(`edit-current persists on the current frame and does NOT touch others`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`edit-current`), api)
+
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const before_cur = await page.evaluate((a) => eval(a).get_frame_x0(eval(a).get_current_idx()), api)
+      const other = idx === 0 ? 1 : 0
+      const before_other = await page.evaluate(([a, o]) => eval(a).get_frame_x0(o), [api, other] as const)
+
+      await page.evaluate((a) => eval(a).trigger_atoms_manipulated(), api) // Δ = [0.01,0,0] on atom 0
+      await page.waitForTimeout(120)
+
+      const after_cur = await page.evaluate((a) => eval(a).get_frame_x0(eval(a).get_current_idx()), api)
+      const after_other = await page.evaluate(([a, o]) => eval(a).get_frame_x0(o), [api, other] as const)
+
+      expect(after_cur, `current frame moved`).toBeCloseTo((before_cur as number) + 0.01, 6)
+      expect(after_other, `other frame untouched`).toBeCloseTo(before_other as number, 6)
+    })
+
+    test(`edit-current survives scrub away and back`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`edit-current`), api)
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const before = await page.evaluate(([a, i]) => eval(a).get_frame_x0(i), [api, idx] as const)
+
+      await page.evaluate((a) => eval(a).trigger_atoms_manipulated(), api)
+      await page.waitForTimeout(120)
+      // scrub away and back via keyboard (existing arrow-key nav)
+      await page.keyboard.press(`ArrowRight`)
+      await page.waitForTimeout(80)
+      await page.keyboard.press(`ArrowLeft`)
+      await page.waitForTimeout(80)
+
+      const after = await page.evaluate(([a, i]) => eval(a).get_frame_x0(i), [api, idx] as const)
+      expect(after, `edit retained after scrub round-trip`).toBeCloseTo((before as number) + 0.01, 6)
+    })
+
+    test(`edit-all fans the displacement out to every frame`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`edit-all`), api)
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const other = idx === 0 ? 1 : 0
+      const before_other = await page.evaluate(([a, o]) => eval(a).get_frame_x0(o), [api, other] as const)
+
+      await page.evaluate((a) => eval(a).trigger_atoms_manipulated(), api)
+      await page.waitForTimeout(120)
+      // Force the lazy pending-op to materialize on `other` by navigating to it.
+      await page.evaluate(([a, o]) => eval(a).set_edit_mode(`edit-all`) , [api, other] as const)
+      await page.keyboard.press(idx < other ? `ArrowRight` : `ArrowLeft`)
+      await page.waitForTimeout(120)
+
+      const after_other = await page.evaluate(([a, o]) => eval(a).get_frame_x0(o), [api, other] as const)
+      expect(after_other, `other frame received the displacement lazily`).toBeCloseTo(
+        (before_other as number) + 0.01, 6,
+      )
+    })
+
+    test(`view mode blocks edits`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`view`), api)
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const before = await page.evaluate(([a, i]) => eval(a).get_frame_x0(i), [api, idx] as const)
+      await page.evaluate((a) => eval(a).trigger_atoms_manipulated(), api)
+      await page.waitForTimeout(120)
+      const after = await page.evaluate(([a, i]) => eval(a).get_frame_x0(i), [api, idx] as const)
+      expect(after, `view mode = no mutation`).toBeCloseTo(before as number, 6)
+    })
+  })
 })
 
 test.describe(`Trajectory Demo Page - Unit-Aware Plotting`, () => {
