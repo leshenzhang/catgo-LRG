@@ -170,6 +170,25 @@ export class TrajectoryBondCache {
     this.generation++
     this.version++
   }
+
+  /** Drop one frame's cached connectivity (position-aware invalidation —
+   *  use after an in-place atom edit on that frame). The `generation++` is
+   *  global: it voids ALL in-flight computes (any frame), not just this one
+   *  — matches `clear()`'s coarse model and is acceptable for the edit case.
+   *  `version++` drives consumers to re-pull. */
+  invalidate(frame_idx: number): void {
+    this.cache.delete(frame_idx)
+    this.inflight.delete(frame_idx)
+    this.generation++
+    this.version++
+  }
+
+  /** Drop every frame (edit-all scope). Delegates to `clear()` — named
+   *  separately for intent at call sites; do not inline (keeps the
+   *  invalidation invariant single-sourced in `clear()`). */
+  invalidate_all(): void {
+    this.clear()
+  }
 }
 
 /** Create a reactive instance of the bond cache. */
@@ -190,6 +209,13 @@ export function wire_trajectory_bond_cache(
     get_options: () => Record<string, number>
     set_connectivity: (v: BondConnectivity[] | null) => void
     get_connectivity: () => BondConnectivity[] | null
+    /** Optional. Bumps when the CURRENT frame's positions change in place
+     *  (atom edit) without step_idx moving — forces a recompute the
+     *  last_idx guard would otherwise skip. */
+    get_positions_version?: () => number
+    /** Optional. When the positions-version bump represents an edit-all
+     *  fan-out, drop EVERY frame's bond cache rather than just `idx`. */
+    get_positions_invalidate_all?: () => boolean
   },
 ): void {
   // Reset cache on actual value changes (not parent-render proxy churn).
@@ -268,16 +294,30 @@ export function wire_trajectory_bond_cache(
   // scene_props / structure and refires this effect, which kicks another
   // bond-worker request, which spreads again, and Svelte 5's flush
   // overflow guard kicks in.
+  let last_pos_version = -1
   $effect(() => {
     const idx = deps.get_step_idx()
+    const pv = deps.get_positions_version?.() ?? 0
     if (idx < 0) return
-    if (idx === last_idx) return
+    const idx_moved = idx !== last_idx
+    const pos_changed = pv !== last_pos_version
+    if (!idx_moved && !pos_changed) return
     untrack(() => {
       const getter = deps.get_positions()
       const base = deps.get_base()
       if (!getter || !base) return
       last_idx = idx
-      cache.on_frame_change(idx, getter, base, deps.get_strategy(), deps.get_options())
+      last_pos_version = pv
+      // A same-frame in-place edit must recompute THIS frame even though
+      // idx didn't move — invalidate then request (on_frame_change's cache
+      // hit-check would otherwise early-return).
+      if (pos_changed && !idx_moved) {
+        if (deps.get_positions_invalidate_all?.()) cache.invalidate_all()
+        else cache.invalidate(idx)
+        cache.request(idx, getter, base, deps.get_strategy(), deps.get_options())
+      } else {
+        cache.on_frame_change(idx, getter, base, deps.get_strategy(), deps.get_options())
+      }
     })
   })
 

@@ -985,6 +985,189 @@ test.describe(`Trajectory Component`, () => {
       check_ratios(vertical_dims, `width`)
     })
   })
+
+  test.describe(`edit architecture (issue #51)`, () => {
+    const api = `(globalThis).__catgo_traj_test`
+
+    test(`edit-current persists on the current frame and does NOT touch others`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`edit-current`), api)
+
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const before_cur = await page.evaluate((a) => eval(a).get_frame_x0(eval(a).get_current_idx()), api)
+      const other = idx === 0 ? 1 : 0
+      const before_other = await page.evaluate(([a, o]) => eval(a).get_frame_x0(o), [api, other] as const)
+
+      await page.evaluate((a) => eval(a).trigger_atoms_manipulated(), api) // Δ = [0.01,0,0] on atom 0
+      await page.waitForTimeout(120)
+
+      const after_cur = await page.evaluate((a) => eval(a).get_frame_x0(eval(a).get_current_idx()), api)
+      const after_other = await page.evaluate(([a, o]) => eval(a).get_frame_x0(o), [api, other] as const)
+
+      expect(after_cur, `current frame moved`).toBeCloseTo((before_cur as number) + 0.01, 6)
+      expect(after_other, `other frame untouched`).toBeCloseTo(before_other as number, 6)
+    })
+
+    test(`edit-current survives scrub away and back`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`edit-current`), api)
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const before = await page.evaluate(([a, i]) => eval(a).get_frame_x0(i), [api, idx] as const)
+
+      await page.evaluate((a) => eval(a).trigger_atoms_manipulated(), api)
+      await page.waitForTimeout(120)
+      // scrub away and back via keyboard (existing arrow-key nav)
+      await page.keyboard.press(`ArrowRight`)
+      await page.waitForTimeout(80)
+      await page.keyboard.press(`ArrowLeft`)
+      await page.waitForTimeout(80)
+
+      const after = await page.evaluate(([a, i]) => eval(a).get_frame_x0(i), [api, idx] as const)
+      expect(after, `edit retained after scrub round-trip`).toBeCloseTo((before as number) + 0.01, 6)
+    })
+
+    test(`edit-all fans the displacement out to every frame`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`edit-all`), api)
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const other = idx === 0 ? 1 : 0
+      const before_other = await page.evaluate(([a, o]) => eval(a).get_frame_x0(o), [api, other] as const)
+
+      await page.evaluate((a) => eval(a).trigger_atoms_manipulated(), api)
+      await page.waitForTimeout(120)
+      // Force the lazy pending-op to materialize on `other` by navigating to it.
+      await page.evaluate(([a, o]) => eval(a).set_edit_mode(`edit-all`) , [api, other] as const)
+      await page.keyboard.press(idx < other ? `ArrowRight` : `ArrowLeft`)
+      await page.waitForTimeout(120)
+
+      const after_other = await page.evaluate(([a, o]) => eval(a).get_frame_x0(o), [api, other] as const)
+      expect(after_other, `other frame received the displacement lazily`).toBeCloseTo(
+        (before_other as number) + 0.01, 6,
+      )
+    })
+
+    test(`view mode blocks edits`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`view`), api)
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const before = await page.evaluate(([a, i]) => eval(a).get_frame_x0(i), [api, idx] as const)
+      await page.evaluate((a) => eval(a).trigger_atoms_manipulated(), api)
+      await page.waitForTimeout(120)
+      const after = await page.evaluate(([a, i]) => eval(a).get_frame_x0(i), [api, idx] as const)
+      expect(after, `view mode = no mutation`).toBeCloseTo(before as number, 6)
+    })
+  })
+
+  test.describe(`add/delete/replace edit scope (issue #51 follow-up)`, () => {
+    const api = `(globalThis).__catgo_traj_test`
+
+    test(`edit-current add: only the current frame gains an atom`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`edit-current`), api)
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const other = idx === 0 ? 1 : 0
+      const cur0 = await page.evaluate(([a, i]) => eval(a).get_frame_natoms(i), [api, idx] as const)
+      const oth0 = await page.evaluate(([a, o]) => eval(a).get_frame_natoms(o), [api, other] as const)
+
+      await page.evaluate((a) => eval(a).trigger_atom_added(), api)
+      await page.waitForTimeout(150)
+
+      const cur1 = await page.evaluate(([a, i]) => eval(a).get_frame_natoms(i), [api, idx] as const)
+      const oth1 = await page.evaluate(([a, o]) => eval(a).get_frame_natoms(o), [api, other] as const)
+      expect(cur1, `current frame +1 atom`).toBe((cur0 as number) + 1)
+      expect(oth1, `other frame unchanged`).toBe(oth0 as number)
+    })
+
+    test(`edit-all add: every frame gains the atom (current + lazily others)`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`edit-all`), api)
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const other = idx === 0 ? 1 : 0
+      const cur0 = await page.evaluate(([a, i]) => eval(a).get_frame_natoms(i), [api, idx] as const)
+      const oth0 = await page.evaluate(([a, o]) => eval(a).get_frame_natoms(o), [api, other] as const)
+
+      await page.evaluate((a) => eval(a).trigger_atom_added(), api)
+      await page.waitForTimeout(150)
+      const cur1 = await page.evaluate(([a, i]) => eval(a).get_frame_natoms(i), [api, idx] as const)
+      expect(cur1, `current frame +1`).toBe((cur0 as number) + 1)
+      await page.keyboard.press(idx < other ? `ArrowRight` : `ArrowLeft`)
+      await page.waitForTimeout(150)
+      const oth1 = await page.evaluate(([a, o]) => eval(a).get_frame_natoms(o), [api, other] as const)
+      expect(oth1, `other frame +1 lazily`).toBe((oth0 as number) + 1)
+    })
+
+    test(`edit-current delete: only current frame loses an atom`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`edit-current`), api)
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const other = idx === 0 ? 1 : 0
+      const cur0 = await page.evaluate(([a, i]) => eval(a).get_frame_natoms(i), [api, idx] as const)
+      const oth0 = await page.evaluate(([a, o]) => eval(a).get_frame_natoms(o), [api, other] as const)
+
+      await page.evaluate((a) => eval(a).trigger_atoms_deleted(), api)
+      await page.waitForTimeout(150)
+
+      const cur1 = await page.evaluate(([a, i]) => eval(a).get_frame_natoms(i), [api, idx] as const)
+      const oth1 = await page.evaluate(([a, o]) => eval(a).get_frame_natoms(o), [api, other] as const)
+      expect(cur1, `current frame -1 atom`).toBe((cur0 as number) - 1)
+      expect(oth1, `other frame unchanged`).toBe(oth0 as number)
+    })
+
+    test(`view mode blocks topology edits`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`view`), api)
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const n0 = await page.evaluate(([a, i]) => eval(a).get_frame_natoms(i), [api, idx] as const)
+      await page.evaluate((a) => eval(a).trigger_atom_added(), api)
+      await page.waitForTimeout(150)
+      const n1 = await page.evaluate(([a, i]) => eval(a).get_frame_natoms(i), [api, idx] as const)
+      expect(n1, `view mode = no topology change`).toBe(n0 as number)
+    })
+
+    // issue B regression: two consecutive edit-all edits WITHOUT scrubbing
+    // between them. The current frame must commit on top of the prior op
+    // (not a stale baseline) so neither op is skipped on it, and the lazy
+    // fan-out must land BOTH ops on other frames identically. Pre-fix, the
+    // missing flush_pending_ops() let the second edit commit on a stale
+    // baseline / pre-advance the cursor past the first op → current frame
+    // diverged from every other frame.
+    test(`edit-all: consecutive manipulate+add (no scrub) keeps both ops on current frame and fans out consistently`, async ({ page }) => {
+      await expect(trajectory_viewer).toBeVisible({ timeout: 10000 })
+      await page.evaluate((a) => eval(a).set_edit_mode(`edit-all`), api)
+      const idx = await page.evaluate((a) => eval(a).get_current_idx(), api)
+      const other = idx === 0 ? 1 : 0
+      const cur_x0 = await page.evaluate(([a, i]) => eval(a).get_frame_x0(i), [api, idx] as const)
+      const cur_n0 = await page.evaluate(([a, i]) => eval(a).get_frame_natoms(i), [api, idx] as const)
+      const oth_x0 = await page.evaluate(([a, o]) => eval(a).get_frame_x0(o), [api, other] as const)
+      const oth_n0 = await page.evaluate(([a, o]) => eval(a).get_frame_natoms(o), [api, other] as const)
+
+      // op1: manipulate atom 0 by Δ=[0.01,0,0]; op2: add an H. No scrub between.
+      await page.evaluate((a) => eval(a).trigger_atoms_manipulated(), api)
+      await page.waitForTimeout(120)
+      await page.evaluate((a) => eval(a).trigger_atom_added(), api)
+      await page.waitForTimeout(150)
+
+      // Current frame must reflect BOTH ops (manipulate not skipped by the
+      // subsequent topology edit committing on a stale baseline).
+      const cur_x1 = await page.evaluate(([a, i]) => eval(a).get_frame_x0(i), [api, idx] as const)
+      const cur_n1 = await page.evaluate(([a, i]) => eval(a).get_frame_natoms(i), [api, idx] as const)
+      expect(cur_x1, `current frame kept the manipulate displacement`).toBeCloseTo(
+        (cur_x0 as number) + 0.01, 6,
+      )
+      expect(cur_n1, `current frame kept the add`).toBe((cur_n0 as number) + 1)
+
+      // Force the lazy fan-out to materialize on `other`, then assert it
+      // received the SAME two ops — no divergence from the current frame.
+      await page.keyboard.press(idx < other ? `ArrowRight` : `ArrowLeft`)
+      await page.waitForTimeout(150)
+      const oth_x1 = await page.evaluate(([a, o]) => eval(a).get_frame_x0(o), [api, other] as const)
+      const oth_n1 = await page.evaluate(([a, o]) => eval(a).get_frame_natoms(o), [api, other] as const)
+      expect(oth_x1, `other frame received the manipulate op lazily`).toBeCloseTo(
+        (oth_x0 as number) + 0.01, 6,
+      )
+      expect(oth_n1, `other frame received the add op lazily`).toBe((oth_n0 as number) + 1)
+    })
+  })
 })
 
 test.describe(`Trajectory Demo Page - Unit-Aware Plotting`, () => {

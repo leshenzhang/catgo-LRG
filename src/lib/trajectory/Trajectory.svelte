@@ -10,7 +10,7 @@
   import { add_atom, delete_atoms, replace_atom } from '$lib/structure'
   import type { AtomManipulationEvent } from '$lib/structure'
   import type { AnyStructure, PymatgenStructure } from '$lib/structure'
-  import { type Matrix3x3, mat3x3_vec3_multiply, matrix_inverse_3x3, transpose_3x3_matrix } from '$lib/math'
+  import { type Matrix3x3, matrix_inverse_3x3, transpose_3x3_matrix } from '$lib/math'
   import { writeRemoteFile } from '$lib/api/hpc'
   import { structure_to_poscar_str } from '$lib/structure/export'
   import { handle_url_drop, load_from_url } from '$lib/io'
@@ -51,12 +51,12 @@
     compute_step_label_positions,
     get_view_mode_label,
     read_file_content,
-    structures_compatible,
   } from './trajectory-utils'
   import {
     clamp_fps,
     get_keyboard_action,
   } from './trajectory-controls'
+  import { apply_displacements, write_sites_to_cache_slice } from './edit-apply'
 
   type EventHandlers = {
     on_play?: (data: TrajHandlerData) => void
@@ -236,6 +236,18 @@
       trigger_atoms_manipulated: () => handle_atoms_manipulated({
         displacements: new Map([[0, [0.01, 0, 0]]]),
       } as AtomManipulationEvent),
+      get edit_mode(): string { return edit_mode },
+      set_edit_mode(m: 'view' | 'edit-current' | 'edit-all') { edit_mode = m },
+      get_frame_x0(frame_idx: number): number | null {
+        return trajectory?.frames?.[frame_idx]?.structure?.sites?.[0]?.xyz?.[0] ?? null
+      },
+      get_current_idx(): number { return current_step_idx },
+      get_frame_natoms(frame_idx: number): number | null {
+        return trajectory?.frames?.[frame_idx]?.structure?.sites?.length ?? null
+      },
+      get_current_frame_x0(): number | null {
+        return trajectory?.frames?.[current_step_idx]?.structure?.sites?.[0]?.xyz?.[0] ?? null
+      },
     }
     ;(globalThis as { __catgo_traj_test?: typeof api }).__catgo_traj_test = api
     return () => {
@@ -1200,7 +1212,8 @@
   let fullscreen = $state(false)
 
   // Cross-frame editing: apply atom manipulations to all frames
-  let cross_frame_edit = $state(true)
+  type EditMode = 'view' | 'edit-current' | 'edit-all'
+  let edit_mode = $state<EditMode>('edit-current')
   let cross_frame_busy = $state(false)
 
   // ─── Pending cross-frame ops (lazy materialization) ───
@@ -1231,6 +1244,12 @@
   let pending_ops     = $state<PendingOp[]>([])
   let frame_op_cursor = $state<number[]>([])
 
+  // Bumped whenever the CURRENT frame's positions change in place (atom
+  // edit). Passed to <Structure> → bond-cache driver so bonds recompute
+  // even though current_step_idx didn't move (issue #51 bond defect).
+  // `all` = drop every frame's bond cache (edit-all fan-out), else just idx.
+  let trajectory_positions_version = $state<{ v: number; all: boolean }>({ v: 0, all: false })
+
   // Keep `frame_op_cursor` length in sync with `trajectory.frames.length`.
   // The only way the frame count changes in steady state is a brand-new
   // trajectory being loaded — in that case the old queue is stale and we
@@ -1260,16 +1279,25 @@
       }
       case 'manipulate': {
         if (!structure?.sites) return structure
-        const disps = op.displacements
-        const new_sites = structure.sites.map((site, idx) => {
-          const d = disps.get(idx)
-          if (!d) return site
-          return {
-            ...site,
-            xyz: [site.xyz[0] + d[0], site.xyz[1] + d[1], site.xyz[2] + d[2]] as Vec3,
-          }
-        })
-        return { ...structure, sites: new_sites }
+        // Same xyz+abc delta-add primitive as the directly-committed current
+        // frame, so fanned-out frames stay consistent for fractional export.
+        let inv_flat:
+          | [number, number, number, number, number, number, number, number, number]
+          | null = null
+        if (`lattice` in structure && (structure as PymatgenStructure).lattice) {
+          const li = matrix_inverse_3x3(
+            transpose_3x3_matrix((structure as PymatgenStructure).lattice.matrix),
+          )
+          inv_flat = [
+            li[0][0], li[0][1], li[0][2],
+            li[1][0], li[1][1], li[1][2],
+            li[2][0], li[2][1], li[2][2],
+          ]
+        }
+        return {
+          ...structure,
+          sites: apply_displacements(structure.sites, op.displacements, inv_flat),
+        }
       }
     }
   }
@@ -1314,74 +1342,19 @@
     pending_ops = [...pending_ops, op]
   }
 
-  // structures_compatible imported from trajectory-utils.ts
-
-  /** Get first non-current frame as compatibility reference (for add/delete/replace where current frame already changed) */
-  function _get_ref_structure(): AnyStructure | null {
-    if (!trajectory) return null
-    for (let i = 0; i < trajectory.frames.length; i++) {
-      if (i !== current_step_idx) return materialize_frame(i) ?? trajectory.frames[i].structure
-    }
-    return null
-  }
-
-  /** Apply edit_fn to all compatible non-current frames in chunks to avoid blocking the UI.
-   *  Used for add/delete/replace — less frequent than move, so object allocation is acceptable. */
-  function _chunked_cross_frame_edit(
-    edit_fn: (structure: AnyStructure) => AnyStructure,
-    ref_structure: AnyStructure,
-  ) {
-    if (!trajectory) return
-    // Catch all frames up to the current pending queue before an eager edit,
-    // so edit_fn sees the latest state and pending ops don't get lost.
-    // No-op while the queue is empty (Phases A–C).
-    flush_pending_ops()
-    const frames = trajectory.frames
-    const skip = current_step_idx
-
-    // Pre-check compatibility once: if the first non-current frame is incompatible, bail early.
-    // Trajectory frames almost always share the same atom count and element sequence.
-    const probe_idx = skip === 0 ? 1 : 0
-    if (probe_idx >= frames.length) return
-    const probe_struct = materialize_frame(probe_idx) ?? frames[probe_idx].structure
-    if (!structures_compatible(ref_structure, probe_struct)) return
-
-    // Chunks sized to stay close to one 60fps frame budget (~16 ms). At
-    // ~1.5–2 ms per frame edit on an 878-site proxy-wrapped structure,
-    // CHUNK=8 keeps each macrotask under ~16 ms so the scheduler rarely
-    // drops a frame. FIRST_CHUNK=4 makes the kick-off task tiny so the user
-    // sees no perceivable hitch right after the delete.
-    const FIRST_CHUNK = 4
-    const CHUNK = 8
-    let pos = 0
-    let first_pass = true
-    cross_frame_busy = true
-
-    function process_chunk() {
-      const size = first_pass ? FIRST_CHUNK : CHUNK
-      first_pass = false
-      const end = Math.min(pos + size, frames.length)
-      for (let i = pos; i < end; i++) {
-        if (i === skip) continue
-        const frame = frames[i]
-        frames[i] = { ...frame, structure: edit_fn(frame.structure) }
-      }
-      pos = end
-      if (pos < frames.length) {
-        setTimeout(process_chunk, 0)
-      } else {
-        if (trajectory) trajectory = { ...trajectory }
-        cross_frame_busy = false
-      }
-    }
-    process_chunk()
-  }
-
-  /** Guard: cross-frame edit enabled and trajectory is in-memory */
-  function _can_cross_frame_edit(): boolean {
-    if (!trajectory || !cross_frame_edit) return false
+  /** True when this trajectory is in-memory (frames mutable, position_cache
+   *  usable). Indexed/streaming trajectories have a frame_loader. */
+  function _is_in_memory(): boolean {
+    if (!trajectory) return false
     // @ts-expect-error - frame_loader is added dynamically for indexed/streaming trajectories
     return !trajectory.frame_loader
+  }
+  /** Gate for cross-frame propagation of add/delete/replace edits: true only
+   *  in edit-all on an in-memory trajectory. In the default `edit-current`
+   *  mode these edits stay current-frame-scoped (intentional per the 3-state
+   *  model — issue #51). */
+  function _can_cross_frame_edit(): boolean {
+    return edit_mode === 'edit-all' && _is_in_memory()
   }
 
   function handle_atoms_manipulated(event: AtomManipulationEvent) {
@@ -1389,129 +1362,147 @@
     const { displacements } = event
     if (displacements.size === 0) return
 
-    if (!_can_cross_frame_edit()) {
+    // view mode: edits disabled. (Edits shouldn't fire, but guard anyway —
+    // never silently mutate while the user is in inspect mode.)
+    if (edit_mode === `view`) return
+    if (!_is_in_memory()) {
+      // Indexed/streaming: positions live in frame.structure already (slow
+      // path writes current_structure = frame.structure each frame). Just
+      // refresh so the change is observed.
       trajectory = { ...trajectory }
       return
     }
 
-    // Drag is still the eager in-place path — make sure any pending queue
-    // ops are applied first so we mutate fresh structures. No-op while the
-    // queue is empty (Phases A–G).
+    // Catch every frame (incl. the current one) up to the pending queue
+    // before this eager in-place edit, so we commit on top of the latest
+    // materialized state and a prior lazy op can't be skipped on the
+    // current frame (its cursor is pre-advanced below). No-op when the
+    // queue is empty. Restores the guard the old `_chunked_cross_frame_edit`
+    // ran before every eager edit.
     flush_pending_ops()
 
-    // Fast path: in-place mutation with inline position cache update.
-    // Avoids all object allocation — just mutates xyz/abc arrays directly.
     const frames = trajectory.frames
-    const skip = current_step_idx
-    const cache = position_cache
+    const idx = current_step_idx
 
-    // Precompute inverse lattice matrix once (shared across all frames with same lattice)
-    let inv_matrix: Matrix3x3 | null = null
-    const sample_idx = skip === 0 ? 1 : 0
-    const sample = materialize_frame(sample_idx) ?? frames[sample_idx]?.structure
-    if (sample && `lattice` in sample && sample.lattice) {
-      const lat = (sample as PymatgenStructure).lattice
-      inv_matrix = matrix_inverse_3x3(transpose_3x3_matrix(lat.matrix))
+    // Build inverse-lattice once (cartesian Δ → fractional Δ for abc).
+    let inv: Matrix3x3 | null = null
+    const ref = frames[idx]?.structure
+    if (ref && `lattice` in ref && (ref as PymatgenStructure).lattice) {
+      const lat = (ref as PymatgenStructure).lattice
+      inv = matrix_inverse_3x3(transpose_3x3_matrix(lat.matrix))
+    }
+    const inv_flat = inv
+      ? [inv[0][0], inv[0][1], inv[0][2], inv[1][0], inv[1][1], inv[1][2], inv[2][0], inv[2][1], inv[2][2]] as
+        [number, number, number, number, number, number, number, number, number]
+      : null
+
+    // ── Single write path: always commit the CURRENT frame first ──────────
+    const cur = frames[idx]
+    if (cur?.structure?.sites) {
+      const new_sites = apply_displacements(cur.structure.sites, displacements, inv_flat)
+      frames[idx] = { ...cur, structure: { ...cur.structure, sites: new_sites } }
+      // Mirror straight into the render source so Phase-2 GPU + bond getter
+      // see the edit. The snap-back window is fully closed once Task 6
+      // reorders interaction.svelte.ts to fire this BEFORE clearing
+      // realtime_position_overrides.
+      const slice = position_cache?.[idx]
+      if (slice) write_sites_to_cache_slice(slice, new_sites)
     }
 
-    // Precompute per-atom displacement entries and their fractional equivalents (computed once, reused for every frame)
-    const disp_entries: [number, Vec3][] = [...displacements.entries()]
-    const frac_disps: Vec3[] = disp_entries.map(([, d]) =>
-      inv_matrix ? mat3x3_vec3_multiply(inv_matrix, d) : d,
-    )
-
-    const CHUNK = 2000 // large chunks — each frame is just a few additions
-    let pos = 0
-    cross_frame_busy = true
-
-    function process_chunk() {
-      const end = Math.min(pos + CHUNK, frames.length)
-      for (let fi = pos; fi < end; fi++) {
-        if (fi === skip) continue
-        const sites = frames[fi].structure.sites
-        const cache_arr = cache?.[fi]
-
-        for (let di = 0; di < disp_entries.length; di++) {
-          const [atom_idx] = disp_entries[di]
-          const site = sites[atom_idx]
-          if (!site) continue
-          const disp = disp_entries[di][1]
-          const frac = frac_disps[di]
-
-          // In-place xyz mutation
-          site.xyz[0] += disp[0]
-          site.xyz[1] += disp[1]
-          site.xyz[2] += disp[2]
-
-          // In-place abc mutation
-          site.abc[0] += frac[0]
-          site.abc[1] += frac[1]
-          site.abc[2] += frac[2]
-
-          // Inline position cache update — skip the $effect rebuild
-          if (cache_arr) {
-            cache_arr[atom_idx * 3] = site.xyz[0]
-            cache_arr[atom_idx * 3 + 1] = site.xyz[1]
-            cache_arr[atom_idx * 3 + 2] = site.xyz[2]
-          }
-        }
-      }
-      pos = end
-      if (pos < frames.length) {
-        setTimeout(process_chunk, 0)
-      } else {
-        if (trajectory) trajectory = { ...trajectory }
-        cross_frame_busy = false
-      }
+    if (edit_mode === `edit-current`) {
+      // Signal bond pipeline THIS frame changed (drop only idx's cache).
+      trajectory_positions_version = { v: trajectory_positions_version.v + 1, all: false }
+      // Other frames stay independent (use-case 2).
+      trajectory = { ...trajectory }
+      return
     }
-    process_chunk()
+
+    // ── edit-all: fan out lazily via the pending-ops machinery ────────────
+    // (use-case 3: many frames, must not freeze). Other frames materialize
+    // their copy of this displacement on next read (scrub / export / flush)
+    // exactly like the proven `delete` path. The current frame is already
+    // committed above, so record the op with its cursor pre-advanced past
+    // the current frame.
+    enqueue_pending_op({ kind: `manipulate`, displacements: new Map(displacements) })
+    frame_op_cursor[idx] = pending_ops.length // current frame already applied
+    // Drop EVERY frame's bond cache (lazy recompute via keyframe/prefetch
+    // scheduler keeps long trajectories smooth).
+    trajectory_positions_version = { v: trajectory_positions_version.v + 1, all: true }
+    trajectory = { ...trajectory }
+  }
+
+  /**
+   * Unified topology-edit write path (add / delete / replace), mirroring the
+   * #51 manipulate path. Always commits the CURRENT frame (the fast-path
+   * renders position_cache / slow-path renders frames[idx].structure — NOT
+   * the bound current_structure — so the current frame must be committed
+   * here, never skipped). Topology changes atom count → drop position_cache
+   * (slow-path renders the edited frame; bond cache invalidated via the
+   * {all:true} positions-version). edit-current stops; edit-all fans the op
+   * out lazily via the existing pending-ops machinery.
+   */
+  function _apply_topology_op(op: PendingOp) {
+    // W5: a topology-altering edit while paused disables resume (even in the
+    // not-in-memory case the local topology / position_cache is now invalid).
+    if (!is_playing) resume_disabled = true
+    if (!trajectory) return
+    if (edit_mode === `view`) return
+    if (!_is_in_memory()) {
+      // Indexed/streaming slow path already renders frame.structure each
+      // frame; the editing UI mutated the current structure via bind. Just
+      // refresh so the change is observed.
+      trajectory = { ...trajectory }
+      return
+    }
+
+    // Catch every frame up to the pending queue before this eager topology
+    // edit, so the current frame is committed on top of the latest
+    // materialized state and a prior lazy op can't be skipped on it (its
+    // cursor is pre-advanced below). No-op when the queue is empty.
+    // Restores the guard the old `_chunked_cross_frame_edit` ran first.
+    flush_pending_ops()
+
+    const frames = trajectory.frames
+    const idx = current_step_idx
+    const cur = frames[idx]
+    if (!cur?.structure) return
+
+    // Commit the CURRENT frame.
+    frames[idx] = { ...cur, structure: apply_op(cur.structure, op) }
+
+    // Topology changed: the Float32 position cache (fixed per-frame length)
+    // is invalid. Dropping it makes the render fall back to the slow path
+    // (current_structure = frames[idx].structure) so the edit is visible on
+    // the current frame; the {all:true} bump invalidates every bond frame.
+    position_cache = null
+    force_cache = null
+    trajectory_positions_version = { v: trajectory_positions_version.v + 1, all: true }
+
+    if (edit_mode === `edit-current`) {
+      // Other frames stay independent (use-case 2).
+      trajectory = { ...trajectory }
+      return
+    }
+
+    // edit-all: fan out lazily (use-case 3 — many frames, must not freeze).
+    // Other frames materialize this op on next read (scrub / export / flush)
+    // exactly like the proven delete path. Current frame already applied →
+    // pre-advance its cursor so materialize_frame won't re-apply it.
+    enqueue_pending_op(op)
+    frame_op_cursor[idx] = pending_ops.length
+    trajectory = { ...trajectory }
   }
 
   function handle_atom_added(event: { element: ElementSymbol; position: Vec3 }) {
-    // W5: topology-altering edit during pause disables resume. Must come
-    // BEFORE _can_cross_frame_edit guard — even for indexed trajectories
-    // where cross-frame propagation doesn't run, the topology is altered
-    // locally and position_cache becomes invalid.
-    if (!is_playing) resume_disabled = true
-    if (!_can_cross_frame_edit()) return
-    // Current frame already has the atom — use non-current frame as ref
-    const ref = _get_ref_structure()
-    if (!ref) return
-    _chunked_cross_frame_edit((s) => add_atom(s, event.element, event.position), ref)
+    _apply_topology_op({ kind: `add`, element: event.element, position: event.position })
   }
 
   function handle_atoms_deleted(event: { site_indices: number[] }) {
-    if (!is_playing) resume_disabled = true
-    // Phase D: lazy delete. O(1) at the edit site. Record the op once; each
-    // frame applies it in `materialize_frame()` the next time that frame is
-    // read (navigation, flush, save). Current frame's view is already
-    // post-delete via Structure.svelte's `bind:structure`, so nothing to do
-    // for it here — if the user scrubs away and comes back, materialize
-    // catches it up from its stale baseline using the same pending op.
-    //
-    // Compared to the previous eager chunked-edit model, this eliminates:
-    //   - 200+ proxy reads per frame per delete
-    //   - setTimeout chunk storm (N_frames / CHUNK tasks)
-    //   - `trajectory = { ...trajectory }` spread → plot_series re-derive
-    //   - cross_frame_busy flag dance
-    if (!_can_cross_frame_edit()) return
-    if (!_get_ref_structure()) return // no other frames to edit
-    enqueue_pending_op({ kind: 'delete', site_indices: event.site_indices })
+    _apply_topology_op({ kind: `delete`, site_indices: event.site_indices })
   }
 
   function handle_atom_replaced(event: { site_indices: number[]; new_element: ElementSymbol }) {
-    if (!is_playing) resume_disabled = true
-    if (!_can_cross_frame_edit()) return
-    // Current frame already has atoms replaced — use non-current frame as ref
-    const ref = _get_ref_structure()
-    if (!ref) return
-    _chunked_cross_frame_edit((s) => {
-      let result = s
-      for (const idx of event.site_indices) {
-        result = replace_atom(result, idx, event.new_element)
-      }
-      return result
-    }, ref)
+    _apply_topology_op({ kind: `replace`, site_indices: event.site_indices, new_element: event.new_element })
   }
 </script>
 
@@ -1729,21 +1720,29 @@
                 {/if}
               </button>
             {/if}
-            <!-- Cross-frame editing toggle -->
+            <!-- Edit-scope mode: view → edit-current → edit-all -->
             <button
               type="button"
-              onclick={() => (cross_frame_edit = !cross_frame_edit)}
-              title={cross_frame_edit
-                ? `Cross-frame editing ON: atom manipulations apply to all frames`
-                : `Cross-frame editing OFF: atom manipulations apply to current frame only`}
+              onclick={() => {
+                edit_mode = edit_mode === `view`
+                  ? `edit-current`
+                  : edit_mode === `edit-current`
+                  ? `edit-all`
+                  : `view`
+              }}
+              title={edit_mode === `view`
+                ? `View only — scrubbing fast, atom edits disabled`
+                : edit_mode === `edit-current`
+                ? `Edit current frame only`
+                : `Edit all frames (sync) — applies to every frame`}
               class="cross-frame-toggle"
-              class:active={cross_frame_edit}
+              class:active={edit_mode !== `view`}
               disabled={cross_frame_busy}
             >
               {#if cross_frame_busy}
                 <Spinner style="width: 14px; height: 14px;" />
               {:else}
-                <Icon icon="Link" />
+                {edit_mode === `view` ? `👁` : edit_mode === `edit-current` ? `✏️1` : `✏️∀`}
               {/if}
             </button>
             {#if trajectory}
@@ -1867,6 +1866,7 @@
           {trajectory_frame_positions}
           {trajectory_frame_forces}
           trajectory_step_idx={current_step_idx}
+          trajectory_positions_version={trajectory_positions_version}
           get_trajectory_frame_positions={(i: number) => position_cache?.[i] ?? null}
           allow_file_drop={false}
           style="height: 100%; min-height: 0; z-index: 3; border-radius: 0"

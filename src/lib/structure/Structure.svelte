@@ -806,6 +806,7 @@
     trajectory_frame_positions = null,
     trajectory_frame_forces = null as Float32Array | null,
     trajectory_step_idx = -1,
+    trajectory_positions_version = { v: 0, all: false },
     get_trajectory_frame_positions = null as ((i: number) => Float32Array | null) | null,
     initial_traj_b64 = ``,
     initial_traj_format = ``,
@@ -940,6 +941,9 @@
       trajectory_frame_forces?: Float32Array | null
       // Active trajectory frame index (for per-frame bond cache).
       trajectory_step_idx?: number
+      // Bumps when the current trajectory frame's positions change in place
+      // (atom edit). Drives a bond recompute the step-idx guard would skip.
+      trajectory_positions_version?: { v: number; all: boolean }
       // Random-access lookup into the trajectory's position cache. When provided,
       // the bond cache can prefetch ±N neighbour frames and recompute connectivity
       // off the main thread.
@@ -1695,6 +1699,8 @@
     get_structure: () => structure,
     get_base: () => supercell_structure ?? structure,
     get_step_idx: () => trajectory_step_idx,
+    get_positions_version: () => trajectory_positions_version.v,
+    get_positions_invalidate_all: () => trajectory_positions_version.all,
     get_trajectory_active: () => trajectory_active,
     get_positions: () => get_trajectory_frame_positions,
     get_strategy: () => (scene_props?.bonding_strategy ?? `electroneg_ratio`) as BondingStrategy,
