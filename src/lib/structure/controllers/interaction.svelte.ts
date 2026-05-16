@@ -446,10 +446,16 @@ export function create_interaction_controller(deps: InteractionDeps) {
     }
 
     deps.set_structure(new_structure)
+    // Fire the trajectory write path FIRST while the overrides still mask
+    // the edited atoms in Structure.svelte's Phase-2 loop. handle_atoms_-
+    // manipulated synchronously mirrors the edit into position_cache[idx];
+    // only after that is it safe to clear the overrides — otherwise Phase-2
+    // re-asserts the pre-edit cache slice for one frame (issue #51 defect C
+    // snap-back). For non-trajectory structures the callback is undefined
+    // and this is a no-op, so set_structure already covers it.
+    if (displacements.size > 0) deps.get_on_atoms_manipulated()?.({ displacements })
     // 安全: StructureScene 的位置快速路径同步更新 last_bond_structure
     realtime_position_overrides = new Map()
-
-    if (displacements.size > 0) deps.get_on_atoms_manipulated()?.({ displacements })
   }
 
   // ═══════════════════════════════════════════════════════════════════
