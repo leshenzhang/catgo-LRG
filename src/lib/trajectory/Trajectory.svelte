@@ -1410,7 +1410,10 @@
     // @ts-expect-error - frame_loader is added dynamically for indexed/streaming trajectories
     return !trajectory.frame_loader
   }
-  /** Back-compat alias kept for any other callers; edit-all == old ON. */
+  /** Gate for cross-frame propagation of add/delete/replace edits: true only
+   *  in edit-all on an in-memory trajectory. In the default `edit-current`
+   *  mode these edits stay current-frame-scoped (intentional per the 3-state
+   *  model — issue #51). */
   function _can_cross_frame_edit(): boolean {
     return edit_mode === 'edit-all' && _is_in_memory()
   }
