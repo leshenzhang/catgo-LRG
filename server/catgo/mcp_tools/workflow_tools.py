@@ -41,6 +41,48 @@ async def _fetch_structure_by_mp_id(client: httpx.AsyncClient, mp_id: str, provi
         return None
 
 
+async def _resolve_structure_input_params(
+    client: httpx.AsyncClient, params: dict,
+) -> dict:
+    """Ensure a structure_input node's params carry a real ``structure_json``.
+
+    Single source of truth for "what structure does this structure_input
+    hold". An LLM cannot synthesise a pymatgen JSON, so when CatBot creates
+    OR edits a structure_input it only ever passes ``mp_id`` (or nothing).
+    Without this resolution the node stays empty no matter how many times
+    the user asks. Resolution order, only when ``structure_json`` is absent:
+
+      1. ``mp_id`` / ``structure_id`` → OPTIMADE fetch.
+      2. otherwise the current viewer structure (what the user is looking
+         at — the most reliable intent signal for an auto-built workflow).
+
+    Mutates and returns ``params``. Best-effort: viewer errors are swallowed
+    so a missing backend never breaks the mutation.
+    """
+    if params.get("structure_json"):
+        return params
+    mp_id = params.get("mp_id") or params.get("structure_id")
+    if mp_id:
+        struct_json = await _fetch_structure_by_mp_id(client, str(mp_id))
+        if struct_json:
+            params["structure_json"] = struct_json
+            if not params.get("label"):
+                params["label"] = str(mp_id)
+            logger.info("structure_input: fetched %s", mp_id)
+            return params
+        logger.warning("structure_input: mp-id fetch failed for %s, trying viewer", mp_id)
+    try:
+        sr = await client.get(f"{API_BASE}/view/structure/current")
+        if sr.status_code == 200:
+            sd = sr.json()
+            if sd:
+                params["structure_json"] = json.dumps(sd) if isinstance(sd, dict) else str(sd)
+                logger.info("structure_input: captured viewer structure")
+    except Exception as e:
+        logger.warning("structure_input: viewer capture failed: %s", e)
+    return params
+
+
 # ---------------------------------------------------------------------------
 # Workflow: node defaults, validation, and handler
 # ---------------------------------------------------------------------------
@@ -110,7 +152,12 @@ _NODE_DEFAULTS: dict[str, dict] = {
     "adsorbate_place": {
         "_inputs": ["structure"], "_outputs": ["structure"],
         "defaults": {"species": "OH", "site": "all", "height": 2.0},
-        "_note": "Use 'list_presets preset_type=adsorbates' to see all ~100 available species.",
+        "_note": (
+            "Param 'species' is the ASCII formula (H, OH, NNH, CH3OH, …) — "
+            "matches server/data/adsorbates.json. Call 'list_presets preset_type=adsorbates' "
+            "for the full library (~70 entries grouped by reaction). "
+            "Param 'site' is one of: all, ontop, bridge, fcc, hcp."
+        ),
     },
     "condition": {
         "_inputs": ["input_a", "input_b"], "_outputs": ["true_out", "false_out"],
@@ -847,6 +894,68 @@ def _graph_snapshot(graph: dict) -> str:
     return "\n".join(lines)
 
 
+# Schema-allowed keys for adsorbate_place — matches
+# src/lib/workflow/node-defs/utility/adsorbate-place.ts. Any other key the
+# LLM invents (e.g. `mode: "end-on"`, `dentate: ...`, `orientation: ...`)
+# gets either translated below or stripped, so the frontend NodeConfigPanel
+# doesn't render unknown noisy fields.
+_ADSORBATE_PLACE_ALLOWED_KEYS = {
+    "species", "custom_xyz", "site", "height", "auto_rotate", "quick_optimize",
+    # backend-internal, kept if already present
+    "structure_json", "site_index",
+    "_manual_adsorbate_cart", "_manual_normal", "_site_strategy",
+}
+_ADSORBATE_PLACE_SITE_ALIASES = {
+    "top": "ontop", "on_top": "ontop", "atop": "ontop",
+    "hollow3": "fcc", "hollow4": "fcc", "hollow": "fcc",
+}
+_UNICODE_SUBSCRIPT_MAP = str.maketrans({
+    "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4",
+    "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9",
+})
+
+
+def _normalize_adsorbate_place_params(merged: dict) -> dict:
+    """Coerce LLM-flavoured params into the canonical schema.
+
+    Three things happen:
+      * `site` aliases (`top` / `atop` / `hollow3` / …) are mapped to the
+        enum the frontend dropdown actually accepts.
+      * `species` is ASCII-folded (`H₂O` → `H2O`) and stripped of a leading
+        `*` so it can be looked up in the JSON library.
+      * The LLM-invented `mode: "end-on" | "side-on"` is translated to
+        `auto_rotate` (the closest concept this node supports) and then
+        dropped, so the panel doesn't render an unknown field.
+      * Any other key not in the schema is dropped with a logger.warning,
+        so the workflow editor doesn't show garbage params after CatBot.
+    """
+    out = dict(merged)
+    # site
+    _site = str(out.get("site", "")).lower().strip()
+    if _site in _ADSORBATE_PLACE_SITE_ALIASES:
+        out["site"] = _ADSORBATE_PLACE_SITE_ALIASES[_site]
+    # species
+    _sp_raw = str(out.get("species", "")).lstrip("*").strip()
+    _sp_ascii = _sp_raw.translate(_UNICODE_SUBSCRIPT_MAP)
+    if _sp_ascii and _sp_ascii != out.get("species"):
+        out["species"] = _sp_ascii
+    # mode (LLM-invented) → auto_rotate
+    if "mode" in out:
+        _m = str(out["mode"]).lower().strip()
+        if _m in ("end-on", "end_on", "endon", "vertical", "upright"):
+            out.setdefault("auto_rotate", True)
+        elif _m in ("side-on", "side_on", "sideon", "flat", "horizontal", "parallel"):
+            out["auto_rotate"] = False
+        del out["mode"]
+    # strip anything not in the schema
+    dropped = [k for k in out if k not in _ADSORBATE_PLACE_ALLOWED_KEYS]
+    if dropped:
+        logger.warning("adsorbate_place: dropped unknown params from LLM: %s", dropped)
+        for k in dropped:
+            del out[k]
+    return out
+
+
 def _validate_graph(graph: dict) -> tuple[list[str], list[str]]:
     """Validate workflow DAG — returns ``(errors, warnings)``.
 
@@ -933,6 +1042,7 @@ _ACTION_REQUIRED: dict[str, list[str]] = {
     "node_types": [],
     "node_details": ["node_type"],
     "create": ["name"],
+    "rename": ["workflow_id", "name"],
     "get": ["workflow_id"],
     "add_node": ["workflow_id", "node_type"],
     "remove_node": ["workflow_id", "node_id"],
@@ -1113,6 +1223,25 @@ async def _handle_workflow(client: httpx.AsyncClient, args: dict) -> list[TextCo
                         if struct_json:
                             si_params["structure_json"] = struct_json
                             logger.info("Fetched structure for %s into workflow", mp_id)
+                        elif len(material_ids) == 1:
+                            # Single-material create and the mp-id fetch failed:
+                            # fall back to the current viewer structure. CatBot
+                            # usually loads the material into the viewer (by name)
+                            # before building the workflow, so the viewer is the
+                            # most reliable source of the intended structure.
+                            # (Multi-material can't be disambiguated this way, so
+                            # only single-material falls back.)
+                            try:
+                                sr = await client.get(f"{API_BASE}/view/structure/current")
+                                if sr.status_code == 200:
+                                    sd = sr.json()
+                                    if sd:
+                                        si_params["structure_json"] = json.dumps(sd) if isinstance(sd, dict) else str(sd)
+                                        logger.info("Captured viewer structure for %s (mp-id fetch failed)", mp_id)
+                            except Exception as e:
+                                logger.warning("Viewer fallback failed for %s: %s", mp_id, e)
+                            if not si_params.get("structure_json"):
+                                logger.warning("Could not fetch structure for %s (no viewer fallback available)", mp_id)
                         else:
                             logger.warning("Could not fetch structure for %s", mp_id)
                         init_nodes.append({
@@ -1158,6 +1287,24 @@ async def _handle_workflow(client: httpx.AsyncClient, args: dict) -> list[TextCo
                 struct_msg = "with viewer structure captured" if has_struct else "(WARNING: no structure in viewer — user must import manually)"
             return [_t(type="text", text=f"Created workflow '{wf['name']}' (id={wf['id']}). {len(init_nodes)} structure_input node(s) {struct_msg}. Use add_node/batch to build the pipeline.{snapshot}")]
 
+        # -- Rename: change only the workflow's display name, leave graph alone --
+        if action == "rename":
+            wf_id = args["workflow_id"]
+            new_name = str(args["name"]).strip()
+            if not new_name:
+                return [_t(type="text", text="rename: name must be non-empty")]
+            # PUT /{id} with only `name` — the backend WorkflowUpdate model
+            # supports rename without touching graph_json (workflow.py:369,
+            # "Update a workflow (save graph, rename, change status)").
+            resp = await client.put(f"{base}/{wf_id}", json={"name": new_name})
+            if resp.status_code not in (200, 201):
+                return [_t(type="text", text=f"Rename failed ({resp.status_code}): {resp.text[:300]}")]
+            wf = resp.json()
+            # Refresh the open editor + sidebar so the new name shows without
+            # a manual reload (same signal create/set_params use).
+            await _push_workflow_navigate(client, wf_id)
+            return [_t(type="text", text=f"Renamed workflow to '{wf.get('name', new_name)}' (id={wf_id}).")]
+
         # -- Batch mutation: multiple operations in a single read-modify-write --
         if action == "batch":
             operations = args["operations"]
@@ -1181,14 +1328,38 @@ async def _handle_workflow(client: httpx.AsyncClient, args: dict) -> list[TextCo
             for idx, op in enumerate(operations):
                 op_type = op.get("op", op.get("action", ""))
                 if op_type == "add_node":
-                    node_type = op.get("node_type", "")
-                    if not node_type:
+                    raw_node_type = op.get("node_type", "")
+                    if not raw_node_type:
                         results.append(f"[{idx}] add_node: missing node_type")
                         continue
+                    # Same convention as the add_node action: registry keys are
+                    # lowercase. Lower-case here so 'Geo_Opt' / 'MD' / 'NEB' hit
+                    # the registry instead of falling through as unknown.
+                    node_type = raw_node_type.lower()
                     ndef = _NODE_DEFAULTS.get(node_type, {})
                     if "_alias" in ndef:
                         node_type = ndef["_alias"]
                         ndef = _NODE_DEFAULTS.get(node_type, {})
+                    # Reject unknown types here too. Without this, a typo
+                    # (e.g. 'adsorbate_placement' instead of 'adsorbate_place')
+                    # silently creates a ghost node with empty defaults and no
+                    # engine binding — the frontend then can't render it and
+                    # the rest of the batch (connect ops referencing this
+                    # label) breaks downstream. The add_node action enforces
+                    # this; the batch path used to skip it. See PR for the
+                    # CatBot OER hang root-causing this.
+                    if not ndef:
+                        valid_types = sorted(
+                            k for k, v in _NODE_DEFAULTS.items() if "_alias" not in v
+                        )
+                        suggestions = difflib.get_close_matches(
+                            node_type, valid_types, n=3, cutoff=0.6,
+                        )
+                        msg = f"[{idx}] add_node: unknown node_type '{raw_node_type}'"
+                        if suggestions:
+                            msg += f" — did you mean: {', '.join(suggestions)}?"
+                        results.append(msg)
+                        continue
                     default_params = dict(ndef.get("defaults", {}))
                     user_params = op.get("params", {})
                     _sw_map: dict[tuple[str, str], str] = {
@@ -1203,27 +1374,15 @@ async def _handle_workflow(client: httpx.AsyncClient, args: dict) -> list[TextCo
                             default_params = dict(_NODE_DEFAULTS[alt].get("defaults", {}))
                     merged = {**default_params, **user_params}
 
-                    # Auto-capture structure for structure_input
-                    if node_type == "structure_input" and not merged.get("structure_json"):
-                        mp_id = merged.get("mp_id") or merged.get("structure_id")
-                        if mp_id:
-                            # Fetch specific material by MP ID instead of viewer
-                            struct_json = await _fetch_structure_by_mp_id(client, str(mp_id))
-                            if struct_json:
-                                merged["structure_json"] = struct_json
-                                if not merged.get("label"):
-                                    merged["label"] = str(mp_id)
-                                logger.info("Fetched structure %s for structure_input node", mp_id)
-                        else:
-                            # Fall back to viewer capture
-                            try:
-                                sr = await client.get(f"{API_BASE}/view/structure/current")
-                                if sr.status_code == 200:
-                                    sd = sr.json()
-                                    if sd:
-                                        merged["structure_json"] = json.dumps(sd) if isinstance(sd, dict) else str(sd)
-                            except Exception:
-                                pass
+                    # Canonicalise LLM-flavoured params (site aliases, ASCII
+                    # species, drop invented keys) so the stored graph contains
+                    # exactly what the frontend NodeConfigPanel expects.
+                    if node_type == "adsorbate_place":
+                        merged = _normalize_adsorbate_place_params(merged)
+
+                    # Resolve structure for structure_input (mp-id → viewer).
+                    if node_type == "structure_input":
+                        merged = await _resolve_structure_input_params(client, merged)
 
                     node_id = f"n{batch_ts}-{idx}{''.join(_rnd.choices('abcdefghijklmnop', k=2))}"
                     # Compute layer for positioning
@@ -1325,7 +1484,15 @@ async def _handle_workflow(client: httpx.AsyncClient, args: dict) -> list[TextCo
                     found = False
                     for n in nodes:
                         if n["id"] == nid:
-                            n["params"] = {**n.get("params", {}), **params}
+                            merged_sp = {**n.get("params", {}), **params}
+                            # Same resolution as add_node/create: editing a
+                            # structure_input via set_params must also turn
+                            # an mp_id (or nothing) into a real structure_json,
+                            # else the node stays empty no matter how often
+                            # the user asks CatBot to set it.
+                            if n.get("type") == "structure_input":
+                                merged_sp = await _resolve_structure_input_params(client, merged_sp)
+                            n["params"] = merged_sp
                             found = True
                             break
                     if not found:
@@ -1439,17 +1606,16 @@ async def _handle_workflow(client: httpx.AsyncClient, args: dict) -> list[TextCo
                         default_params = dict(_NODE_DEFAULTS[alt_key].get("defaults", {}))
                 merged_params = {**default_params, **user_params}
 
-                # Auto-capture current viewer structure for structure_input nodes
-                if node_type == "structure_input" and not merged_params.get("structure_json"):
-                    try:
-                        sr = await client.get(f"{API_BASE}/view/structure/current")
-                        if sr.status_code == 200:
-                            struct_data = sr.json()
-                            if struct_data:
-                                merged_params["structure_json"] = json.dumps(struct_data) if isinstance(struct_data, dict) else str(struct_data)
-                                logger.info("Auto-captured viewer structure for structure_input node")
-                    except Exception as e:
-                        logger.warning("Failed to auto-capture viewer structure: %s", e)
+                # Canonicalise LLM-flavoured params for adsorbate_place. See
+                # _normalize_adsorbate_place_params docstring for the rules.
+                if node_type == "adsorbate_place":
+                    merged_params = _normalize_adsorbate_place_params(merged_params)
+
+                # Resolve structure for structure_input (mp-id → viewer).
+                # Previously this path only did viewer capture (no mp-id
+                # fetch) — now unified with every other path via the helper.
+                if node_type == "structure_input":
+                    merged_params = await _resolve_structure_input_params(client, merged_params)
 
                 node_id = f"n{int(time.time())}-{''.join(_rnd.choices('abcdefghijklmnop', k=4))}"
                 # DAG-layer-aware positioning (matches editor's Sugiyama layout)
@@ -1579,7 +1745,15 @@ async def _handle_workflow(client: httpx.AsyncClient, args: dict) -> list[TextCo
                 found = False
                 for n in nodes:
                     if n["id"] == node_id:
-                        n["params"] = {**n.get("params", {}), **params}
+                        merged_set = {**n.get("params", {}), **params}
+                        if n.get("type") == "adsorbate_place":
+                            merged_set = _normalize_adsorbate_place_params(merged_set)
+                        elif n.get("type") == "structure_input":
+                            # Editing a structure_input must resolve mp_id /
+                            # viewer into a real structure_json — without this
+                            # the node stays empty however many times asked.
+                            merged_set = await _resolve_structure_input_params(client, merged_set)
+                        n["params"] = merged_set
                         found = True
                         break
                 if not found:
@@ -1763,17 +1937,31 @@ async def _handle_workflow(client: httpx.AsyncClient, args: dict) -> list[TextCo
         if action == "list_presets":
             preset_type = args.get("preset_type", "vasp")
             if preset_type == "adsorbates":
+                # Read directly from the JSON source of truth so this view
+                # stays in sync with the workflow engine and the frontend
+                # adsorbate library. Previously this imported a non-existent
+                # `workflow.presets.adsorbates` module and always errored out.
                 try:
-                    from workflow.presets.adsorbates import ADSORBATE_GROUPS
-                    lines = ["Available adsorbate presets (~100 molecules):\n"]
-                    for group_name, entries in ADSORBATE_GROUPS.items():
-                        lines.append(f"  [{group_name}]")
-                        for e in entries:
-                            lines.append(f"    {e['formula']:12s} — {e['name']} ({e['n_atoms']} atoms)")
-                    lines.append("\nUse these formula names as the 'species' parameter in adsorbate_place nodes.")
-                    lines.append("Names are case-insensitive. The '*' prefix is optional.")
+                    from pathlib import Path
+                    json_path = (
+                        Path(__file__).resolve().parent.parent
+                        / "data" / "adsorbates.json"
+                    )
+                    data = json.loads(json_path.read_text(encoding="utf-8"))
+                    groups = data.get("groups", [])
+                    total = sum(len(g.get("presets", [])) for g in groups)
+                    lines = [f"Available adsorbate presets ({total} entries across {len(groups)} reaction groups):\n"]
+                    for g in groups:
+                        lines.append(f"  [{g['label']}]")
+                        for p in g.get("presets", []):
+                            n_atoms = len(p.get("atoms", []))
+                            display = p.get("display_formula", p["formula"])
+                            note = f" (display: {display})" if display != p["formula"] else ""
+                            lines.append(f"    {p['formula']:14s} — {p['name']} ({n_atoms} atoms){note}")
+                    lines.append("\nUse the ASCII formula (left column) as the 'species' param in adsorbate_place nodes.")
+                    lines.append("Names are case-insensitive. A leading '*' prefix is accepted but optional.")
                     return [_t(type="text", text="\n".join(lines))]
-                except ImportError as exc:
+                except (FileNotFoundError, OSError) as exc:
                     return [_t(type="text", text=f"Cannot load adsorbate presets: {exc}")]
             else:
                 try:

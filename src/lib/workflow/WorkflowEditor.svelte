@@ -37,6 +37,7 @@
   import StructureListInputPanel from './StructureListInputPanel.svelte'
   import AdsorbatePlacePanel from './AdsorbatePlacePanel.svelte'
   import StructurePreview from '$lib/structure/StructurePreview.svelte'
+  import { get_current_structure } from '$lib/structure/current-structure.svelte'
   import JobScriptWorkplace from './JobScriptWorkplace.svelte'
   import VaspEditorModal from './components/VaspEditorModal.svelte'
   import ImportWorkflowDialog from './components/ImportWorkflowDialog.svelte'
@@ -1838,6 +1839,32 @@
     setTimeout(() => (save_flash = false), 800)
   }
 
+  // After a (re)load, fill any structure_input node the backend could not
+  // resolve. CatBot's set_params/add_node resolves structure_json via
+  // mp_id or the backend viewer copy; in a full-screen Workflow editor the
+  // backend viewer copy is wiped (structure pane closed), so the node
+  // comes back empty. Inject the durable client-side structure here — the
+  // user's "put the current structure into Structure Input" via CatBot then
+  // actually lands. Conservative: only nodes with NO structure_json AND no
+  // mp_id/structure_id (i.e. backend genuinely had nothing and there is no
+  // Materials Project source to defer to). Persist via schedule_save so the
+  // injection survives the next reload instead of being wiped again.
+  function fill_empty_structure_inputs(): void {
+    const cur = get_current_structure()
+    if (!cur) return
+    let changed = false
+    nodes = nodes.map((n) => {
+      if (n.type !== `structure_input`) return n
+      const p = n.params ?? {}
+      const has_struct = typeof p.structure_json === `string` && p.structure_json.length > 0
+      const has_mp = !!(p.mp_id || p.structure_id)
+      if (has_struct || has_mp) return n
+      changed = true
+      return { ...n, params: { ...p, structure_json: JSON.stringify(cur) } }
+    })
+    if (changed) schedule_save()
+  }
+
   async function reload_from_server() {
     if (!workflow_id) return
     try {
@@ -1860,6 +1887,7 @@
         }
       })
       edges = graph.edges || []
+      fill_empty_structure_inputs()
       push_history()
       change_det.set_external_change_detected(false)
     } catch (err) {
@@ -1902,6 +1930,7 @@
       })
       edges = graph.edges || []
       is_loaded = true
+      fill_empty_structure_inputs()
       // Auto-layout if any nodes were missing coordinates
       if (nodes.length > 0 && (graph.nodes || []).some((n: WfNode) => !Number.isFinite(n.x) || !Number.isFinite(n.y))) {
         do_auto_layout()
@@ -2074,19 +2103,31 @@
   let reload_debounce_timer: ReturnType<typeof setTimeout> | null = null
   $effect(() => {
     const seq = wf_slice.workflow_reload_seq.seq
+    // `last_reload_seq` is advanced INSIDE the timer (i.e. only once the
+    // reload actually runs), NOT here at schedule time. If this effect
+    // re-runs for an unrelated reason before the 250 ms elapses, the
+    // guard below is still true, so we just re-arm the debounce rather
+    // than dropping the reload. Previously last_reload_seq was bumped at
+    // schedule time and the cleanup cancelled the pending timer on every
+    // re-run — a single isolated bump (exactly the rename case: one MCP
+    // tool call → one seq++) was silently lost, while multi-bump big
+    // generations survived by luck. See the rename-not-reflected fix.
     if (seq > last_reload_seq && is_loaded) {
-      last_reload_seq = seq
       if (reload_debounce_timer) clearTimeout(reload_debounce_timer)
       reload_debounce_timer = setTimeout(() => {
         reload_debounce_timer = null
+        last_reload_seq = seq
         reload_from_server().then(() => do_auto_layout())
       }, 250)
     }
-    return () => {
-      if (reload_debounce_timer) {
-        clearTimeout(reload_debounce_timer)
-        reload_debounce_timer = null
-      }
+  })
+  // Teardown-only cleanup: no tracked deps, so the cleanup fires solely
+  // on component destroy — an unrelated re-run of the effect above can no
+  // longer cancel a valid pending reload.
+  $effect(() => () => {
+    if (reload_debounce_timer) {
+      clearTimeout(reload_debounce_timer)
+      reload_debounce_timer = null
     }
   })
 
@@ -2416,7 +2457,7 @@
             {@const path = bezier(fp.x, fp.y, tp.x, tp.y)}
             {@const is_sel = sel_edge === edge.id}
             {@const cfg = NODE_DEFINITIONS[fn.type]}
-            {@const out_idx = parseInt(edge.fromH.split(`-`)[1]) || 0}
+            {@const out_idx = parseInt((edge.fromH ?? ``).split(`-`)[1]) || 0}
             {@const ecolor = is_sel ? `var(--accent-color, #60a5fa)` : cfg?.is_condition ? (out_idx === 0 ? `#22c55e` : `#ef4444`) : (cfg?.color || `#475569`) + `80`}
             {@const mid = point_on_bezier(fp.x, fp.y, tp.x, tp.y, 0.5)}
             <g>
@@ -2853,6 +2894,14 @@
               {/if}
             {/if}
             <!-- ═══ Custom panels that replace NodeConfigPanel ═══ -->
+            <!-- Key on nd.id so Svelte tears down + remounts the panel when
+                 the user clicks between two same-typed nodes (e.g. ads_OH →
+                 ads_O). Without this, the panel component instance is
+                 reused and its internal `$state` locals (species_idx,
+                 site_strategy, manual_position, …) keep the previous
+                 node's values — the canonical "click another node, then
+                 back" workaround the user was hitting. -->
+            {#key nd.id}
             {#if nd.type === `doping_gen`}
               <!-- Doping uses dedicated modal — no NodeConfigPanel needed -->
             {:else if nd.type === `adsorbate_place`}
@@ -3012,6 +3061,7 @@
               {/if}
             </NodeConfigPanel>
             {/if}
+            {/key}
             {#if is_structure_node(nd.type) && nd.type !== `slab_gen` && nd.type !== `adsorbate_place`}
               <button
                 class="tbtn structure-btn"
