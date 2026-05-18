@@ -785,12 +785,51 @@ def api_run_workflow(workflow_id: str, config: WorkflowRunConfig):
                                                config=_run_config_to_engine_config(config),
                                                workflow_id=workflow_id)
             else:
-                # Same graph — reset tasks but preserve results
+                # Same node IDs — reset task states but preserve results.
+                # Critical: also resync each task's task_type + params_json
+                # from the current graph_json. Without this, changing a
+                # node's calc type (e.g. md → geo_opt) or any param in
+                # the editor never reaches the V2 engine — the task keeps
+                # its stale task_type and the engine routes to the wrong
+                # parser / engine, e.g. parser stays in MD mode even
+                # though the user expects OPT force display.
                 from catgo.workflow.engine.lifecycle import reset_workflow as engine_reset
                 engine_reset(engine_db, workflow_id)
                 engine_db.update_workflow(workflow_id,
                     config_json=json.dumps(_run_config_to_engine_config(config)))
                 engine_wf_id = workflow_id
+                # Resync per-task type + params from current graph_json so
+                # editor edits propagate.
+                old_by_id = {t["id"]: t for t in old_tasks}
+                for n in graph_dict.get("nodes", []):
+                    nid = n.get("id")
+                    if nid not in old_by_id:
+                        continue
+                    old_t = old_by_id[nid]
+                    new_type = n.get("type", "") or old_t.get("task_type")
+                    new_params = n.get("params") or {}
+                    updates: dict = {}
+                    if new_type != old_t.get("task_type"):
+                        updates["task_type"] = new_type
+                    # Merge: preserve any per-task fields that aren't part
+                    # of the graph (e.g. job_walltime/job_nodes set in the
+                    # node Properties panel, structure_json from parents)
+                    # by layering graph params over old params, not
+                    # replacing. _apply_run_config_to_tasks below will
+                    # then merge in step_job_params on top.
+                    try:
+                        old_params = json.loads(old_t.get("params_json", "{}") or "{}")
+                    except Exception:
+                        old_params = {}
+                    merged = {**old_params, **new_params}
+                    if merged != old_params:
+                        updates["params_json"] = json.dumps(merged)
+                    if updates:
+                        engine_db.update_task(nid, **updates)
+                        logger.info(
+                            "Workflow %s: resynced task %s from graph (type=%s)",
+                            workflow_id, nid[:12], new_type,
+                        )
         except KeyError:
             # First run: create V2 workflow from graph_json
             engine_wf_id = convert_graph_json(engine_db, wf.name or workflow_id, graph,
