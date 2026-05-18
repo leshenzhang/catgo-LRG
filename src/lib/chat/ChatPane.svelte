@@ -40,6 +40,8 @@
   } from './message-utils'
   import { get_tool_results_for, is_streaming } from './tool-execution'
   import { copy_to_clipboard, handle_messages_click } from './attachment-utils'
+  import { run_slash, SLASH_COMMANDS } from './slash-commands'
+  import { get_current_structure } from '$lib/structure/current-structure.svelte'
 
 
   // Dynamic providers from backend
@@ -635,6 +637,53 @@
     if (textarea_el) textarea_el.style.height = `auto`
     active_tab = `chat`
 
+    // Slash commands: intercept before DOI / send_message. A "/"-prefixed
+    // line never reaches the LLM. Unknown "/x" is reported locally.
+    if (msg.startsWith(`/`)) {
+      const emit_note = (text: string) => {
+        slice.messages.list = [...slice.messages.list,
+          { role: `assistant`, content: text, timestamp: Date.now() }]
+      }
+      const handled = await run_slash(msg, {
+        tab_id: tab_slice_id,
+        args: ``,
+        new_session: () => new_session(SDK_PROVIDERS.has(chat_config.provider) ? chat_config.provider.replace(`sdk-`, ``) : undefined, tab_slice_id),
+        clear_chat_history: () => clear_chat_history(tab_slice_id),
+        cancel_generation: () => cancel_generation(tab_slice_id),
+        resume_session: (agent, sid, messages, tid) => resume_session(agent, sid, messages, tid ?? tab_slice_id),
+        list_sessions: () => session_list.list,
+        load_session_messages: (sid) => load_session_messages(sid),
+        run_quickbuild: async (recipe, mp_id) => {
+          const resp = await fetch(`${API_BASE}/workflow/quickbuild`, {
+            method: `POST`, headers: { 'Content-Type': `application/json` },
+            body: JSON.stringify(mp_id ? { recipe, material_id: mp_id } : { recipe }),
+          })
+          if (!resp.ok) throw new Error((await resp.text().catch(() => String(resp.status))).slice(0, 200))
+          const data = await resp.json()
+          const wf_id = data.workflow_id
+          if (wf_id) {
+            const wfslice = get_workflow_slice(tab_slice_id)
+            wfslice.pending_navigate_workflow.id = wf_id
+            wfslice.workflow_reload_seq.seq++
+            emit_note(`✅ ${recipe.toUpperCase()} workflow built${mp_id ? ` for ${mp_id}` : ``}.`)
+          } else {
+            emit_note(`⚠️ ${recipe.toUpperCase()} quick-build did not return a workflow. Try again or check the backend.`)
+          }
+        },
+        inject_structure: async () => {
+          const cur = get_current_structure()
+          if (!cur) { emit_note(`No structure loaded — open one in a structure viewer first.`); return }
+          const wfslice = get_workflow_slice(tab_slice_id)
+          wfslice.workflow_reload_seq.seq++
+          emit_note(`Structure captured. Open the Workflow editor — an empty Structure Input node will be filled with it (a node that already has a structure is left unchanged).`)
+        },
+        set_skip_permission: (on) => { slice.skip_permission.value = on },
+        get_skip_permission: () => slice.skip_permission.value,
+        emit: emit_note,
+      })
+      if (handled) return
+    }
+
     // Auto-detect DOI input and resolve it. Skip while a round is streaming:
     // send_message will queue this text and the DOI branch would otherwise
     // clobber slice.loading mid-stream.
@@ -664,7 +713,66 @@
     await send_message(msg, attachments, tab_slice_id)
   }
 
+  let slash_idx = $state(0)
+  let slash_dismissed = $state(false)
+  const slash_filtered = $derived.by(() => {
+    const s = input_text
+    if (!s.startsWith(`/`) || /\s/.test(s)) return []
+    const tok = s.slice(1).toLowerCase()
+    return SLASH_COMMANDS
+      .filter(c => c.name.startsWith(tok) || c.aliases?.some(a => a.startsWith(tok)))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  })
+  const slash_open = $derived(!slash_dismissed && slash_filtered.length > 0)
+  // Clamp via $derived (not an $effect that writes slash_idx — that is the
+  // self-trigger antipattern this codebase was bitten by). slash_idx is the
+  // raw nav cursor; slash_sel is the safe index everything else reads.
+  const slash_sel = $derived(
+    slash_filtered.length === 0 ? 0 : Math.min(slash_idx, slash_filtered.length - 1)
+  )
+  // Reset dismissal when the user keeps typing (input changes).
+  // _slash_last_input is a plain let (not $state) so reading/writing it does
+  // not create reactive deps — only input_text is tracked; no infinite loop.
+  let _slash_last_input = ''
+  $effect(() => {
+    if (input_text !== _slash_last_input) {
+      _slash_last_input = input_text
+      if (slash_dismissed) slash_dismissed = false
+    }
+  })
+
+  function apply_slash_selection() {
+    const c = slash_filtered[slash_sel]
+    if (!c) return
+    input_text = `/${c.name} `
+    slash_idx = 0
+    slash_dismissed = false
+    textarea_el?.focus()
+  }
+
   function handle_keydown(event: KeyboardEvent) {
+    if (slash_open) {
+      if (event.key === `ArrowDown`) {
+        event.preventDefault()
+        slash_idx = (slash_sel + 1) % slash_filtered.length
+        return
+      }
+      if (event.key === `ArrowUp`) {
+        event.preventDefault()
+        slash_idx = (slash_sel - 1 + slash_filtered.length) % slash_filtered.length
+        return
+      }
+      if (event.key === `Tab` || (event.key === `Enter` && !event.shiftKey)) {
+        event.preventDefault()
+        apply_slash_selection()
+        return
+      }
+      if (event.key === `Escape`) {
+        event.preventDefault()
+        slash_dismissed = true
+        return
+      }
+    }
     if (event.key === `Enter` && !event.shiftKey) {
       event.preventDefault()
       handle_send()
@@ -1309,6 +1417,23 @@
           {/each}
         </div>
       {/if}
+      {#if slash_open}
+        <div class="slash-menu" role="listbox">
+          {#each slash_filtered as c, i (c.name)}
+            <button
+              type="button"
+              class="slash-row"
+              class:sel={i === slash_sel}
+              role="option"
+              aria-selected={i === slash_sel}
+              onmousedown={(e) => { e.preventDefault(); slash_idx = i; apply_slash_selection() }}
+            >
+              <span class="slash-name">/{c.name}{c.hint ? ` ${c.hint}` : ``}</span>
+              <span class="slash-summary">{c.summary}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
       <div class="input-wrapper" class:focused={false}>
         <button
           type="button"
@@ -1395,7 +1520,9 @@
         style="display: none"
       />
       <div class="input-hint-row">
-        {#if slice.pending_send?.value}
+        {#if slice.skip_permission.value}
+          <span class="input-hint skip-warn">⚠️ skip-permission ON — tools run without asking</span>
+        {:else if slice.pending_send?.value}
           <span class="input-hint queued">⏳ Queued — sends when the current reply finishes</span>
         {:else if slice.loading.value}
           <span class="input-hint">Enter to queue · sends after the current reply · Esc stops</span>
@@ -2264,6 +2391,10 @@
     font-size: 0.72em;
     color: var(--text-color-muted, #6b7280);
   }
+  .input-hint.skip-warn {
+    color: var(--error-color);
+    font-weight: 600;
+  }
   /* Paper attachment badge */
   .paper-badge {
     display: flex;
@@ -2812,5 +2943,43 @@
     opacity: 1;
     background: color-mix(in srgb, #ef4444 15%, transparent);
     color: #ef4444;
+  }
+  .slash-menu {
+    display: flex;
+    flex-direction: column;
+    max-height: 240px;
+    overflow-y: auto;
+    margin: 0 0 4px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--surface-bg, var(--pane-card-bg));
+  }
+  .slash-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    padding: 5px 9px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+  }
+  .slash-row:last-child { border-bottom: none; }
+  .slash-row.sel,
+  .slash-row:hover {
+    background: color-mix(in srgb, var(--accent-color) 16%, transparent);
+  }
+  .slash-name {
+    font-family: monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-color);
+  }
+  .slash-summary {
+    font-size: 11px;
+    color: var(--text-color-muted);
   }
 </style>
