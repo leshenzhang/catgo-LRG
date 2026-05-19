@@ -23,6 +23,10 @@ window.addEventListener(`unhandledrejection`, (e) => render_error(`Unhandled rej
 
 let app: unknown
 try {
+  // Svelte 5 mount() APPENDS to target — it does not clear existing content.
+  // render_status() above filled #app with the "Loading CatGo…" placeholder;
+  // remove it here or it stays on top and visually masks the mounted app.
+  target.replaceChildren()
   app = mount(App, { target })
 } catch (err) {
   render_error(`CatGo failed to start:`, err)
