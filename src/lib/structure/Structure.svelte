@@ -3827,6 +3827,7 @@
       }}
       sections={[
         {
+          id: `Add Atom`,
           title: t('structure.add_atom_section'),
           options: [
             {
@@ -3838,6 +3839,7 @@
           ],
         },
         {
+          id: `Selection`,
           title: t('structure.selection_section'),
           options: [
             ...unique_elements.map((el) => ({
@@ -3863,6 +3865,7 @@
           ],
         },
         {
+          id: `Edit Atoms`,
           title: t('structure.edit_atoms'),
           options: [
             {
@@ -3906,6 +3909,7 @@
         ...ctx_constraints_section,
         ...ctx_charge_label_section,
         {
+          id: `Atom Color`,
           title: t('structure.atom_color'),
           options: [
             {
@@ -3934,6 +3938,7 @@
           ],
         },
         {
+          id: `Defect Atom`,
           title: t('structure.defect_atom'),
           options: [
             {
@@ -3949,6 +3954,7 @@
           ],
         },
         {
+          id: `Import`,
           title: t('common.import'),
           options: [
             {
@@ -4086,13 +4092,37 @@
     onchange={handle_charges_import}
   />
 
-  <!-- Hidden color input for per-atom color override -->
+  <!-- Color input for per-atom color override. Must satisfy 3 constraints
+       to actually open the native picker via programmatic .click():
+       1. NOT display:none — picker refuses to open on hidden inputs
+       2. NOT off-viewport (e.g. left:-9999px) — Tauri webview / Chromium
+          refuses to open native picker for off-screen elements (this was
+          the bug: input was at -9999px so .click() returned without
+          opening the picker)
+       3. Stays visually invisible to the user
+       Solution: position fixed at viewport corner with 1px size and
+       opacity 0. Element is "on-screen" enough for the browser/webview
+       to allow the picker dialog, but invisible to the user. -->
   <input
     type="color"
-    style="display: none;"
+    style="position: fixed; opacity: 0; width: 1px; height: 1px; left: 0; top: 0; border: 0; padding: 0; margin: 0; z-index: -1;"
+    aria-hidden="true"
+    tabindex="-1"
     bind:this={color_picker_input}
+    oninput={(e) => {
+      // `input` event fires continuously as user drags the picker
+      // slider — gives live preview while the dialog is still open.
+      // Some webviews (Tauri / WebKit) only fire `change` on dismiss,
+      // so without this the user sees no feedback during selection.
+      const hex = (e.target as HTMLInputElement).value
+      console.log(`[Color picker input]`, hex, `targets=`, [...sel_state.color_picker_targets])
+      for (const idx of sel_state.color_picker_targets) {
+        site_color_overrides.set(idx, hex)
+      }
+    }}
     onchange={(e) => {
       const hex = (e.target as HTMLInputElement).value
+      console.log(`[Color picker change]`, hex, `targets=`, [...sel_state.color_picker_targets])
       for (const idx of sel_state.color_picker_targets) {
         site_color_overrides.set(idx, hex)
       }
