@@ -1648,7 +1648,7 @@
                   initial_panel={pane.initial_panel}
                   on_file_load={create_on_file_load(tab.id, idx)}
                   on_file_drop={create_on_file_drop(tab.id, idx)}
-                  on_database_import={handle_database_import}
+                  on_structure_imported={() => update_tab_label(tab.id)}
                   on_save_to_project={open_save_dialog}
                   on_save_to_database={open_save_dialog}
                   on_clear_structure={() => {

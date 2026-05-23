@@ -790,7 +790,7 @@
     on_fullscreen_change,
     on_camera_move,
     on_camera_reset,
-    on_database_import,
+    on_structure_imported,
     on_atoms_manipulated,
     on_atom_added,
     on_atoms_deleted,
@@ -899,9 +899,10 @@
       on_fullscreen_change?: EventHandler
       on_camera_move?: EventHandler
       on_camera_reset?: EventHandler
-      // Callback for database imports (OPTIMADE/PubChem) - if provided, imports go to this callback
-      // instead of replacing the current structure. Used by multi-pane layouts to redirect imports.
-      on_database_import?: (structure: PymatgenStructure) => void
+      // Notify the parent that a structure was imported/merged into this pane (e.g. so a
+      // multi-pane host can refresh the tab label). Notification only — the structure itself
+      // is already applied via the bound `structure` prop.
+      on_structure_imported?: () => void
       // Callback fired after atoms are committed from manipulation (drag, keyboard move, rotation).
       // Reports per-atom displacement vectors for cross-frame editing in trajectories.
       on_atoms_manipulated?: (event: import('./index').AtomManipulationEvent) => void
@@ -2309,75 +2310,49 @@
     get_atom_fast_ops: () => scene_atom_fast_ops,
   })
 
-  // Handle OPTIMADE structure import
+  // Handle OPTIMADE / PubChem structure import.
+  //   • empty pane  → load the imported structure (with a full camera reset)
+  //   • loaded pane → merge the import into the current structure
+  // Because `structure` is bound to the active pane, the write-back targets the
+  // correct pane in multi-pane layouts — no parent routing required.
   function handle_optimade_import(imported_structure: PymatgenStructure) {
     if (!imported_structure?.sites?.length) {
       return
     }
 
-    // If callback is provided and there's already a structure loaded,
-    // redirect to callback (for multi-pane layouts)
-    if (on_database_import && structure) {
-      on_database_import(imported_structure)
-      optimade_modal_visible = false
-      optimade_preview_visible = false
-      return
-    }
-
-    // Save current state for undo
-    push_to_undo()
-
-    // Identify atoms added by PubChem imports (not in initial structure)
-    let added_atoms: NonNullable<typeof structure>['sites'] = []
-    const initial_structure = sel_state.first_structure_snapshot
-    if (initial_structure && structure?.sites) {
-      if (initial_structure.sites) {
-        // Find atoms in current structure that aren't in initial structure
-        // Compare by position with tolerance
-        added_atoms = structure.sites.filter((site) => {
-          const is_from_initial = initial_structure.sites.some((initial_site) => {
-            const dx = site.xyz[0] - initial_site.xyz[0]
-            const dy = site.xyz[1] - initial_site.xyz[1]
-            const dz = site.xyz[2] - initial_site.xyz[2]
-            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz)
-            return distance < 0.01 // 0.01 Å tolerance for position matching
-          })
-          return !is_from_initial
-        })
-      }
-    }
-
-    // Combine OPTIMADE structure with imported PubChem atoms
-    // Full camera reset: reposition + re-center on the new structure
-    scene_props.camera_position = [0, 0, 0] // triggers auto-positioning at correct distance
-    center_camera_trigger++ // re-center orbit target on structure
-    camera_has_moved = false
-    if (added_atoms.length > 0) {
-      structure = {
-        ...imported_structure,
-        sites: [...imported_structure.sites, ...added_atoms],
-      }
+    if (structure?.sites?.length) {
+      // Save current state for undo, then merge the import outside the existing
+      // structure (offset with padding).
+      push_to_undo()
+      const import_position = get_import_position_outside(structure, imported_structure)
+      const merged = merge_structures(structure, imported_structure, import_position)
+      // Mark _aligned so align_on_load doesn't re-rotate the merged structure,
+      // which would shift the original atoms and cause overlap.
+      structure = { ...merged, _aligned: true } as any as typeof structure
     } else {
+      // Empty pane: load the import directly with a full camera reset.
+      scene_props.camera_position = [0, 0, 0] // triggers auto-positioning at correct distance
+      center_camera_trigger++ // re-center orbit target on structure
+      camera_has_moved = false
       structure = imported_structure
     }
 
     selected_sites = []
     optimade_import_position = null
+    optimade_modal_visible = false
+    optimade_preview_visible = false
+
+    // Notify the parent (multi-pane app) so it can refresh the tab label.
+    on_structure_imported?.()
   }
 
   // get_import_position_outside — delegated to controllers/transform-controller.ts
 
-  // Handle pasted content import
+  // Handle pasted content import.
+  //   • empty pane  → load the pasted structure
+  //   • loaded pane → merge it into the current structure
   function handle_paste_content_import(imported_structure: PymatgenStructure, filename: string) {
     if (!imported_structure?.sites?.length) return
-
-    // If callback is provided and there's already a structure loaded,
-    // redirect to callback (for multi-pane layouts)
-    if (on_database_import && structure) {
-      on_database_import(imported_structure)
-      paste_content_modal_visible = false
-      return
-    }
 
     // Save current state for undo
     if (structure) {
@@ -2396,13 +2371,15 @@
       structure = imported_structure
     }
     selected_sites = []
+    paste_content_modal_visible = false
 
     // Capture for MD analysis (serialize structure since raw content isn't available)
     imported_traj_b64 = content_to_base64(JSON.stringify(imported_structure))
     imported_traj_format = filename.split(`.`).pop()?.toLowerCase() || ``
 
-    // Emit file load event
+    // Emit file load event + notify parent to refresh the tab label
     on_file_load?.({ filename, file_size: 0 })
+    on_structure_imported?.()
   }
 
   // Handle OPTIMADE structure preview
