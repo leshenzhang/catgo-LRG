@@ -29,6 +29,35 @@ def test_list_building_blocks_has_connection_counts():
     assert n409["n_connection_points"] == 4  # Cu paddlewheel
 
 
+def test_list_building_blocks_includes_formula_and_elements():
+    bbs = list_building_blocks(query="N409")
+    n409 = next(b for b in bbs if b["name"] == "N409")
+    assert n409["n_connection_points"] == 4
+    assert "Cu" in n409["formula"]            # Cu paddlewheel -> C4Cu2O8
+    assert "Cu" in n409["elements"]
+
+
+def test_list_building_blocks_cn_filter():
+    only4 = list_building_blocks(cn=4)
+    assert only4, "expected some 4-connected BBs"
+    assert all(b["n_connection_points"] == 4 for b in only4)
+
+
+def test_list_building_blocks_search_by_element():
+    # Searching an element should find BBs whose formula contains it even if the
+    # name does not (names are opaque codes like N409).
+    cu_bbs = list_building_blocks(query="Cu")
+    assert any(b["name"] == "N409" for b in cu_bbs)
+    assert all("Cu" in b["formula"] for b in cu_bbs)
+
+
+def test_router_building_blocks_cn_param():
+    from catgo.routers.reticular import list_building_blocks_route
+    res = list_building_blocks_route(cn=4)
+    assert all(b.n_connection_points == 4 for b in res)
+    assert all(b.formula for b in res)
+
+
 def test_topology_detail_reports_node_types_and_cn():
     detail = topology_detail("tbo")
     assert detail["name"] == "tbo"
@@ -54,7 +83,10 @@ def test_build_unknown_topology_raises():
         build_reticular(topology="definitely_not_a_net", node_bbs={0: "N10"}, edge_bbs={})
 
 
-@pytest.mark.parametrize("preset", ["mof-5", "hkust-1", "zif-8", "cof-300"])
+from catgo.models.reticular import PRESETS  # noqa: E402
+
+
+@pytest.mark.parametrize("preset", sorted(PRESETS))
 def test_build_each_preset(preset):
     struct = build_preset(preset)
     assert struct.num_sites > 0
@@ -135,4 +167,5 @@ def test_router_list_presets():
 
     res = list_presets_route()
     ids = {p["id"] for p in res}
-    assert {"mof-5", "hkust-1", "zif-8", "cof-300"} == ids
+    # The original four must always be present; the library is expandable.
+    assert {"mof-5", "hkust-1", "zif-8", "cof-300"} <= ids
