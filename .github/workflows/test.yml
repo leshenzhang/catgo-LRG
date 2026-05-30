@@ -64,6 +64,13 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    # Run inside Playwright's official image, which ships the browsers
+    # preinstalled at /ms-playwright. The chromium download from
+    # cdn.playwright.dev systematically stalled ~18min on the runner and tripped
+    # the job backstop before the tests ran; the image removes that download
+    # entirely. Keep the tag in sync with @playwright/test in package.json.
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.0-noble
     continue-on-error: true
     # Hard backstop: e2e is non-gating (continue-on-error) and has historically
     # hung on the dev-server webServer, running to GitHub's 6h job cap. Bound it.
@@ -89,6 +96,11 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
+      # The Playwright image is minimal and lacks a C toolchain. Native deps
+      # (node-pty) need node-gyp -> make/g++/python3 to build during install.
+      - name: Install build toolchain for native modules
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential python3
+
       - name: Install dependencies
         run: pnpm install
 
@@ -101,9 +113,7 @@ jobs:
       - name: Build documentation chunks
         run: pnpm run build:doc-chunks
 
-      - name: Install Playwright
-        run: npx playwright install chromium
-
+      # Browsers are preinstalled in the container image, so no download step.
       - name: Run e2e tests
         continue-on-error: true
         run: npx playwright test
