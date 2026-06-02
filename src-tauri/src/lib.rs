@@ -279,6 +279,15 @@ pub fn run() {
             ssh::pty::ssh_pty_write,
             ssh::pty::ssh_pty_resize,
             ssh::pty::ssh_pty_close,
+            // SFTP file browser (mobile HPC; compiled & registered on desktop too)
+            ssh::sftp::sftp_list,
+            ssh::sftp::sftp_stat,
+            ssh::sftp::sftp_read,
+            ssh::sftp::sftp_read_bytes,
+            ssh::sftp::sftp_write,
+            ssh::sftp::sftp_mkdir,
+            ssh::sftp::sftp_remove,
+            ssh::sftp::sftp_rename,
         ]);
 
     // Mobile handler: identical to the desktop handler above minus the local-PTY
@@ -344,6 +353,15 @@ pub fn run() {
             ssh::pty::ssh_pty_write,
             ssh::pty::ssh_pty_resize,
             ssh::pty::ssh_pty_close,
+            // SFTP file browser (mobile HPC; compiled & registered on desktop too)
+            ssh::sftp::sftp_list,
+            ssh::sftp::sftp_stat,
+            ssh::sftp::sftp_read,
+            ssh::sftp::sftp_read_bytes,
+            ssh::sftp::sftp_write,
+            ssh::sftp::sftp_mkdir,
+            ssh::sftp::sftp_remove,
+            ssh::sftp::sftp_rename,
         ]);
 
     let app = builder

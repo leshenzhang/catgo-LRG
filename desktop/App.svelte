@@ -7,6 +7,8 @@
   import type { AnyStructure } from '$lib'
   import { parse_cube_header, cube_atoms_to_molecule } from '$lib/cube'
   import { API_BASE, STATIC_ONLY } from '$lib/api/config'
+  import { isMobile } from '$lib/api/transport'
+  import MobileShell from '$lib/mobile/MobileShell.svelte'
   import { check_tauri, init_tauri, read_dropped_paths as tauri_read_dropped_paths, pick_structure_paths as tauri_pick_structure_paths, pick_folder_paths as tauri_pick_folder_paths } from '$lib/io/tauri'
   import { decompress_file } from '$lib/io/decompress'
   import { is_trajectory_file, parse_trajectory_data } from '$lib/trajectory/parse'
@@ -126,6 +128,10 @@
   // ========== Popout / Sidebar / Pane / Layout / Export / DragDrop / Resize deps ==========
   let is_tauri = $state(false)
   let popout_chat_mode = $state(false)
+  // Mobile (iOS/Android Tauri) gate. When true the entire desktop UI is
+  // replaced by the standalone MobileShell, which drives the native russh
+  // transport. Evaluated once at module load; desktop (false) is unaffected.
+  const is_mobile = isMobile()
   // Tab id the popout is mirroring. Parsed from the URL hash
   // (#chat?tab_id=structure-1). Used by ChatPane to filter BroadcastChannel
   // messages and to write incoming contexts into the correct slice.
@@ -1525,6 +1531,8 @@
 <StatusPopout />
 {:else if popout_doping_pt_mode}
 <DopingPTWindow />
+{:else if is_mobile}
+<MobileShell />
 {:else}
 <div class="app-container">
 

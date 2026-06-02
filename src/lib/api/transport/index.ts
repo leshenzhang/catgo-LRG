@@ -69,6 +69,26 @@ export interface HpcExecResult {
   code: number
 }
 
+/** A single remote filesystem entry surfaced by the SFTP file browser. */
+export interface SftpEntry {
+  /** Base name (no directory component). */
+  name: string
+  /** Full remote path (POSIX `/`-joined). */
+  path: string
+  /** Whether the entry is a directory. */
+  isDir: boolean
+  /** File size in bytes (0 when the server omits it). */
+  size: number
+}
+
+/** Result of reading a (possibly truncated) remote text file. */
+export interface SftpReadResult {
+  /** UTF-8 (lossy) decoded contents, capped at `maxBytes` when provided. */
+  content: string
+  /** True when the file was longer than `maxBytes` and got cut off. */
+  truncated: boolean
+}
+
 /**
  * A pluggable HPC transport. Both the HTTP (desktop) and Tauri-SSH (mobile)
  * backends implement this exact surface so callers are backend-agnostic.
@@ -112,6 +132,36 @@ export interface HpcTransport {
 
   /** Tear down an open PTY channel (idempotent). */
   ptyClose(sessionId: string, channelId: string): Promise<void>
+
+  /**
+   * List the entries of a remote directory. Mobile (tauri-ssh) only; the HTTP
+   * shim throws.
+   */
+  sftpList(sessionId: string, path: string): Promise<SftpEntry[]>
+
+  /** Stat a single remote path. */
+  sftpStat(sessionId: string, path: string): Promise<SftpEntry>
+
+  /**
+   * Read a remote file as UTF-8 (lossy) text, optionally capped at `maxBytes`
+   * (returns `{ content, truncated }`).
+   */
+  sftpRead(sessionId: string, path: string, maxBytes?: number): Promise<SftpReadResult>
+
+  /** Read a remote file as raw bytes (binary downloads / non-text files). */
+  sftpReadBytes(sessionId: string, path: string): Promise<Uint8Array>
+
+  /** Write (create/truncate) a remote text file. */
+  sftpWrite(sessionId: string, path: string, content: string): Promise<void>
+
+  /** Create a remote directory. */
+  sftpMkdir(sessionId: string, path: string): Promise<void>
+
+  /** Remove a remote file. */
+  sftpRemove(sessionId: string, path: string): Promise<void>
+
+  /** Rename / move a remote path. */
+  sftpRename(sessionId: string, from: string, to: string): Promise<void>
 }
 
 /**

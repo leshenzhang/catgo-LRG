@@ -11,18 +11,19 @@
 //!   * `auth.rs`    — `ssh_connect` (password / public-key; OTP detection).
 //!   * `otp.rs`     — `ssh_submit_otp` (clearly-marked TODO stub).
 //!   * `exec.rs`    — `ssh_exec` (login-shell exec, never-throw, ~30s timeout).
+//!   * `sftp.rs`    — `sftp_*` file-browser ops over a per-call SFTP subsystem.
 //!
 //! Known TODOs (see the respective files for detail):
 //!   * TOFU persistent pinning (handler.rs) — currently accept-and-log only.
 //!   * OTP / keyboard-interactive wiring (auth.rs + otp.rs).
 //!   * ProxyJump / direct-tcpip (not yet implemented; spike documents the API).
-//!   * SFTP file transfer (russh-sftp added, not yet wired).
 
 pub mod auth;
 pub mod exec;
 pub mod handler;
 pub mod otp;
 pub mod pty;
+pub mod sftp;
 pub mod state;
 
 // Re-exported for ergonomic `ssh::ssh_connect` use elsewhere. NOTE: `lib.rs`'s
