@@ -20,9 +20,12 @@
   import { parse_any_structure } from '$lib/structure/parsers/dispatch'
   import { structure_to_poscar } from '$lib/structure/export/offline-serialize'
   import { writeRemoteFile } from '$lib/api/hpc'
+  import { transport } from '$lib/api/transport'
   import MobileConnect from './MobileConnect.svelte'
   import MobileTerminal from './MobileTerminal.svelte'
   import MobileFiles from './MobileFiles.svelte'
+  import KeySetup from './KeySetup.svelte'
+  import { loadConnections } from './connections'
 
   type Mode = `choose` | `structure` | `terminal` | `split-h` | `split-v`
 
@@ -38,6 +41,12 @@
   let local_filename = $state(`structure.vasp`)
   let files_open = $state(false)
   let save_msg = $state(``)
+
+  // SSH-key passwordless onboarding (shown once per endpoint after first connect).
+  let ks_visible = $state(false)
+  let ks_host = $state(``)
+  let ks_port = $state(22)
+  let ks_user = $state(``)
 
   let file_input: HTMLInputElement | undefined = $state()
 
@@ -107,6 +116,23 @@
   function on_connected(id: string): void {
     session_id = id
     if (mode === `choose`) mode = `terminal`
+
+    // Offer SSH-key passwordless setup once per endpoint (skip if already keyed
+    // or the connection already used a public key). MobileConnect persists the
+    // connection on success, so the most-recent entry gives host/port/user.
+    const recent = loadConnections()[0]
+    if (!recent || recent.method === `publickey`) return
+    ks_host = recent.host
+    ks_port = recent.port
+    ks_user = recent.username
+    transport
+      .keyLoad(`${recent.host}:${recent.port}:${recent.username}`)
+      .then((k) => {
+        ks_visible = k == null
+      })
+      .catch(() => {
+        ks_visible = false
+      })
   }
 
   // Which panes are visible in the current layout.
@@ -210,6 +236,16 @@
         <MobileFiles {session_id} follow_path={term_cwd} on_open_structure={open_remote_structure} />
       </div>
     </div>
+  {/if}
+
+  {#if ks_visible && session_id}
+    <KeySetup
+      {session_id}
+      host={ks_host}
+      port={ks_port}
+      username={ks_user}
+      on_done={() => (ks_visible = false)}
+    />
   {/if}
 </div>
 
