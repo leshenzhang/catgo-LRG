@@ -40,7 +40,9 @@ class SSHFileOpsMixin:
         if sftp is None:
             return await self._list_dir_subprocess(path)
         try:
-            return await self._list_dir_sftp(path)
+            # Bound the op: realpath/readdir can hang on a DTN-offloaded node
+            # even after the handshake succeeds. Timeout => fall back to exec.
+            return await asyncio.wait_for(self._list_dir_sftp(path), timeout=15)
         except Exception as e:
             logger.warning(f"SFTP list_dir failed, falling back to exec: {e}")
             self._sftp_failed = True
