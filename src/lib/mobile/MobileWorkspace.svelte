@@ -17,6 +17,7 @@
 -->
 <script lang="ts">
   import Structure from '$lib/structure/Structure.svelte'
+  import OptimadeSearchModal from '$lib/structure/OptimadeSearchModal.svelte'
   import { parse_any_structure } from '$lib/structure/parsers/dispatch'
   import { structure_to_poscar } from '$lib/structure/export/offline-serialize'
   import { writeRemoteFile } from '$lib/api/hpc'
@@ -40,7 +41,14 @@
   let remote_origin = $state<{ path: string; filename: string } | null>(null)
   let local_filename = $state(`structure.vasp`)
   let files_open = $state(false)
+  let db_visible = $state(false)
   let save_msg = $state(``)
+
+  // Hide the editor toolbar items that don't apply on mobile: server/HPC +
+  // terminal are owned by MobileWorkspace (russh); workflow, plugin_hub and chat
+  // are Python-backend-only (chat streams via /api/agent/stream) so they can't
+  // work without the backend.
+  const HIDDEN_TOOLBAR = [`server`, `terminal`, `workflow`, `plugin_hub`, `chat`]
 
   // SSH-key passwordless onboarding (shown once per endpoint after first connect).
   let ks_visible = $state(false)
@@ -118,6 +126,18 @@
   // ── Remote structure open (from the Files browser) ──
   function open_remote_structure(content: string, filename: string, path: string): void {
     set_structure(content, filename, { path })
+  }
+
+  // ── Database import (OPTIMADE / Materials Project / PubChem) ──
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function on_db_import(s: any): void {
+    structure = s
+    saveable_structure = undefined
+    local_filename = `POSCAR`
+    remote_origin = null
+    save_msg = ``
+    db_visible = false
+    if (mode === `choose` || mode === `terminal`) mode = `structure`
   }
 
   // ── Save: write back to the cluster, or download locally ──
@@ -200,6 +220,11 @@
         <span class="mw-choice-main">View / edit a structure</span>
         <span class="mw-choice-desc">Open a local file — no cluster needed</span>
       </button>
+      <button type="button" class="mw-choice" onclick={() => (db_visible = true)}>
+        <span class="mw-choice-icon">🗄</span>
+        <span class="mw-choice-main">Import from a database</span>
+        <span class="mw-choice-desc">Search OPTIMADE / Materials Project / PubChem</span>
+      </button>
       <button type="button" class="mw-choice" onclick={() => (mode = `terminal`)}>
         <span class="mw-choice-icon">⌨</span>
         <span class="mw-choice-main">Connect to cluster</span>
@@ -220,6 +245,7 @@
           <button type="button" class="mw-act" onclick={() => (files_open = true)} title="Remote files">📁</button>
         {/if}
         <button type="button" class="mw-act" onclick={open_local} title="Open local file">⬆</button>
+        <button type="button" class="mw-act" onclick={() => (db_visible = true)} title="Import from database">🗄</button>
         {#if can_save}
           <button type="button" class="mw-act save" onclick={save} title="Save structure">💾</button>
         {/if}
@@ -247,6 +273,7 @@
               fullscreen_toggle={false}
               allow_file_drop={false}
               persist_settings={false}
+              hidden_toolbar_items={HIDDEN_TOOLBAR}
             />
           {:else}
             <div class="mw-empty">
@@ -296,6 +323,14 @@
     />
   {/if}
 </div>
+
+{#if db_visible}
+  <OptimadeSearchModal
+    visible={db_visible}
+    onclose={() => (db_visible = false)}
+    onimport={on_db_import}
+  />
+{/if}
 
 <style>
   .mw-root {

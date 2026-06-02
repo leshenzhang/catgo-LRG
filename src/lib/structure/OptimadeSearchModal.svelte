@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Icon, PeriodicTable } from '$lib'
+  import { isMobile } from '$lib/api/transport'
   import type { OptimadeProvider, OptimadeSearchResult, OptimadeStructure } from '$lib/api/optimade'
   import {
     fetch_optimade_providers,
@@ -60,6 +61,8 @@
   let search_elements = $state(``)
   // Search mode: 'only' = exclusive elements, 'at_least' = HAS ALL, 'formula' = exact formula
   let search_mode = $state<`only` | `at_least` | `formula`>(`only`)
+  // The element periodic-table picker is big; collapse it by default on mobile.
+  let pt_collapsed = $state(isMobile())
   // Elements selected via the periodic table (used for 'only' and 'at_least' modes)
   let selected_elements = $state<string[]>([])
   let loading_providers = $state(false)
@@ -685,14 +688,19 @@
                 — {t('structure.selected_elements')} <strong>{selected_elements.join(`, `)}</strong>
                 <button class="clear-link" onclick={clear_selected_elements}>{t('common.clear')}</button>
               {/if}
+              <button class="clear-link" onclick={() => (pt_collapsed = !pt_collapsed)}>
+                {pt_collapsed ? `Show table` : `Hide table`}
+              </button>
             </p>
-            <PeriodicTable
-              active_elements={selected_elements as never}
-              tile_props={{
-                onclick: ({ element }) => toggle_element(element.symbol),
-              }}
-              style="max-width: 100%; font-size: 0.55em;"
-            />
+            {#if !pt_collapsed}
+              <PeriodicTable
+                active_elements={selected_elements as never}
+                tile_props={{
+                  onclick: ({ element }) => toggle_element(element.symbol),
+                }}
+                style="max-width: 100%; font-size: 0.55em;"
+              />
+            {/if}
           </div>
         {/if}
 
