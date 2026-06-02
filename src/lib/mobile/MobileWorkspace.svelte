@@ -64,29 +64,10 @@
   let ks_user = $state(``)
 
   let file_input: HTMLInputElement | undefined = $state()
-  let root_el: HTMLDivElement | undefined = $state()
-
-  // Track the visual viewport so the terminal sits flush against the keyboard the
-  // moment it opens (the native window-insets padding alone settles a frame late,
-  // so without this the bar shows a gap until the keyboard is toggled once).
-  $effect(() => {
-    const vv = typeof window !== `undefined` ? window.visualViewport : null
-    const el = root_el
-    if (!vv || !el) return
-    const apply = (): void => {
-      el.style.height = `${vv.height}px`
-      el.style.transform = vv.offsetTop ? `translateY(${vv.offsetTop}px)` : ``
-    }
-    apply()
-    vv.addEventListener(`resize`, apply)
-    vv.addEventListener(`scroll`, apply)
-    return () => {
-      vv.removeEventListener(`resize`, apply)
-      vv.removeEventListener(`scroll`, apply)
-      el.style.height = ``
-      el.style.transform = ``
-    }
-  })
+  // NOTE: the keyboard is handled by the native window-insets padding in
+  // MainActivity (this WebView's window.visualViewport does NOT shrink for the
+  // IME). We deliberately do NOT bind the root height to visualViewport — doing
+  // so double-counts the keyboard and leaves a black gap above it.
 
   let term_cwd = $state(``)
   const has_structure = $derived(structure != null)
