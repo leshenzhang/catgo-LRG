@@ -113,6 +113,15 @@
     }
   }
 
+  // Drop the session → the terminal pane shows the connect form again (saved
+  // connections + OTP-only reconnect still apply). The structure stays loaded.
+  function disconnect(): void {
+    session_id = null
+    ks_visible = false
+    files_open = false
+    if (!has_structure) mode = `terminal`
+  }
+
   function on_connected(id: string): void {
     session_id = id
     if (mode === `choose`) mode = `terminal`
@@ -180,6 +189,9 @@
         <button type="button" class="mw-act" onclick={open_local} title="Open local file">⬆</button>
         {#if can_save}
           <button type="button" class="mw-act save" onclick={save} title="Save structure">💾</button>
+        {/if}
+        {#if session_id}
+          <button type="button" class="mw-act disconnect" onclick={disconnect} title="Disconnect">⏏</button>
         {/if}
       </div>
     </header>
@@ -339,6 +351,9 @@
   }
   .mw-act.save {
     color: #4ade80;
+  }
+  .mw-act.disconnect {
+    color: #ff6b6b;
   }
   .mw-msg {
     flex-shrink: 0;
