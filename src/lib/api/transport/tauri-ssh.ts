@@ -12,6 +12,7 @@
  */
 
 import type {
+  GeneratedKeyPair,
   HpcConnectConfig,
   HpcConnectResult,
   HpcExecResult,
@@ -204,6 +205,36 @@ class TauriSshTransport implements HpcTransport {
 
   async sftpRename(sessionId: string, from: string, to: string): Promise<void> {
     await invokeTauri<void>(`sftp_rename`, { sessionId, from, to })
+  }
+
+  async keygen(): Promise<GeneratedKeyPair> {
+    // Rust `ssh_keygen` -> { public_openssh, private_openssh } (snake_case).
+    const r = await invokeTauri<{ public_openssh: string; private_openssh: string }>(
+      `ssh_keygen`,
+      {},
+    )
+    return { publicOpenssh: r.public_openssh, privateOpenssh: r.private_openssh }
+  }
+
+  async installPubkey(sessionId: string, publicOpenssh: string): Promise<void> {
+    // Rust `ssh_install_pubkey` returns an ExecResult (never-throw); a non-zero
+    // exit code means the remote install failed — surface it as a rejection so
+    // the UI can show the error.
+    const r = await invokeTauri<RustExecResult>(`ssh_install_pubkey`, {
+      sessionId,
+      publicOpenssh,
+    })
+    if (r.code !== 0) {
+      throw new Error(r.stderr || `Public key install failed (code ${r.code})`)
+    }
+  }
+
+  async keyStore(endpointKey: string, privateOpenssh: string): Promise<void> {
+    await invokeTauri<void>(`ssh_key_store`, { endpointKey, privateOpenssh })
+  }
+
+  async keyLoad(endpointKey: string): Promise<string | null> {
+    return invokeTauri<string | null>(`ssh_key_load`, { endpointKey })
   }
 }
 

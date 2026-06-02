@@ -288,6 +288,11 @@ pub fn run() {
             ssh::sftp::sftp_mkdir,
             ssh::sftp::sftp_remove,
             ssh::sftp::sftp_rename,
+            // SSH-key passwordless login (keygen / install / at-rest storage)
+            ssh::keygen::ssh_keygen,
+            ssh::keygen::ssh_install_pubkey,
+            ssh::keygen::ssh_key_store,
+            ssh::keygen::ssh_key_load,
         ]);
 
     // Mobile handler: identical to the desktop handler above minus the local-PTY
@@ -362,6 +367,11 @@ pub fn run() {
             ssh::sftp::sftp_mkdir,
             ssh::sftp::sftp_remove,
             ssh::sftp::sftp_rename,
+            // SSH-key passwordless login (keygen / install / at-rest storage)
+            ssh::keygen::ssh_keygen,
+            ssh::keygen::ssh_install_pubkey,
+            ssh::keygen::ssh_key_store,
+            ssh::keygen::ssh_key_load,
         ]);
 
     let app = builder

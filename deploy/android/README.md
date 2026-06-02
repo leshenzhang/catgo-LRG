@@ -203,6 +203,64 @@ artifact is **unsigned** unless you configure a signing key in
 `src-tauri/gen/android/keystore.properties` Tauri generates); sign with the
 standard `apksigner`/Play App Signing flow before distribution.
 
+## SSH-key passwordless login — private-key at-rest protection
+
+The mobile passwordless-login flow (`KeySetup.svelte` → Rust `ssh::keygen`)
+generates an ed25519 keypair ON THE DEVICE, installs the **public** key into the
+cluster's `~/.ssh/authorized_keys` over the live session, and persists the
+**private** key wrapped at rest. The private key never leaves the phone in the
+clear.
+
+### What is implemented today (software fallback)
+
+`src-tauri/src/ssh/keygen.rs` wraps the private key with **AES-256-GCM**. The
+data-encryption key (DEK) is generated from the OS CSPRNG (`getrandom`) and
+stored alongside the ciphertext in a JSON envelope under the app data dir
+(`<app_data_dir>/ssh_keys/<endpoint>.json`, `0600` on Unix). Commands:
+
+- `ssh_keygen` → `{ public_openssh, private_openssh }`
+- `ssh_install_pubkey(session_id, public_openssh)` → idempotent `authorized_keys`
+  append (`grep -qF` guard, `~/.ssh` 700 / `authorized_keys` 600)
+- `ssh_key_store(endpoint_key, private_openssh)` / `ssh_key_load(endpoint_key)`
+
+> **Security caveat.** This protects the key from casual at-rest disclosure but
+> the DEK is software-held next to the ciphertext, so it is **NOT hardware-bound**
+> and **NOT** resistant to an attacker with root/full filesystem access. It is a
+> portable fallback, not the production hardening target.
+
+### Intended hardening (AndroidKeyStore — NOT yet wired)
+
+On Android the DEK should be generated and held inside the **AndroidKeyStore**
+(hardware-backed / StrongBox where available, non-exportable), so the raw DEK
+never exists in app-readable storage. A small Kotlin Tauri plugin would expose
+`encrypt`/`decrypt` over a Keystore-held `AES/GCM/NoPadding` key:
+
+```kotlin
+// Generate once, hardware-backed, non-exportable:
+val kpg = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+kpg.init(
+  KeyGenParameterSpec.Builder("catgo_ssh_dek",
+      KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+    .setKeySize(256)
+    // .setUserAuthenticationRequired(true)  // optional: gate on biometric/PIN
+    // .setIsStrongBoxBacked(true)           // when the device has a secure element
+    .build())
+val key = kpg.generateKey()
+// Cipher.getInstance("AES/GCM/NoPadding") with that key wraps/unwraps the
+// OpenSSH private key; only the GCM IV + ciphertext are persisted.
+```
+
+The Rust surface is shaped so this is a localized swap: `wrap_dek()` /
+`unwrap_dek()` in `keygen.rs` are the single seam where the DEK source changes
+from `getrandom` to a Keystore-plugin `invoke`. The envelope format
+(`KeyEnvelope`, versioned via `v`) would drop the `dek_b64` field and instead
+store the Keystore IV. **This Kotlin plugin is documented here but is not built
+or verified in this change** — the host CI box has no Android SDK (see the
+toolchain warning at the top), so only the Rust software fallback is compiled and
+checked.
+
 ## Notes
 
 - `pnpm tauri ...` routes through `scripts/tauri-dev.mjs`, which passes every

@@ -36,7 +36,7 @@ pub struct ExecResult {
 
 impl ExecResult {
     /// Build an error result (`code = -1`) with the given stderr message.
-    fn error(msg: impl Into<String>) -> Self {
+    pub(crate) fn error(msg: impl Into<String>) -> Self {
         Self {
             stdout: String::new(),
             stderr: msg.into(),

@@ -626,11 +626,13 @@ dependencies = [
 name = "catgo"
 version = "1.1.4"
 dependencies = [
+ "aes-gcm",
  "base64 0.22.1",
  "catgo-graph",
  "chrono",
  "dirs",
  "flate2",
+ "getrandom 0.2.17",
  "log",
  "objc2",
  "portable-pty",
@@ -963,6 +965,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
+ "rand_core 0.6.4",
  "typenum",
 ]
 

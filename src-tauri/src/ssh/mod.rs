@@ -21,6 +21,7 @@
 pub mod auth;
 pub mod exec;
 pub mod handler;
+pub mod keygen;
 pub mod otp;
 pub mod pty;
 pub mod sftp;

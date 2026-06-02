@@ -11,6 +11,7 @@
 
 import { API_BASE } from '../config'
 import type {
+  GeneratedKeyPair,
   HpcConnectConfig,
   HpcConnectResult,
   HpcExecResult,
@@ -151,6 +152,24 @@ class HttpTransport implements HpcTransport {
 
   async sftpRename(_sessionId: string, _from: string, _to: string): Promise<void> {
     throw new Error(`http transport: SFTP is not supported (mobile russh only)`)
+  }
+
+  // SSH-key passwordless login is a mobile (russh + device keystore) capability
+  // only. On desktop the Python backend owns key material, not this shim.
+  async keygen(): Promise<GeneratedKeyPair> {
+    throw new Error(`http transport: SSH keygen is not supported (mobile only)`)
+  }
+
+  async installPubkey(_sessionId: string, _publicOpenssh: string): Promise<void> {
+    throw new Error(`http transport: installPubkey is not supported (mobile only)`)
+  }
+
+  async keyStore(_endpointKey: string, _privateOpenssh: string): Promise<void> {
+    throw new Error(`http transport: key storage is not supported (mobile only)`)
+  }
+
+  async keyLoad(_endpointKey: string): Promise<string | null> {
+    throw new Error(`http transport: key storage is not supported (mobile only)`)
   }
 }
 

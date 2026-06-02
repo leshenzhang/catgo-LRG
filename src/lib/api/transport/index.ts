@@ -81,6 +81,15 @@ export interface SftpEntry {
   size: number
 }
 
+/** A freshly-generated SSH keypair (OpenSSH wire forms). */
+export interface GeneratedKeyPair {
+  /** `ssh-ed25519 AAAA... comment` — installed into `authorized_keys`. */
+  publicOpenssh: string
+  /** OpenSSH PEM private key (unencrypted on the wire; the device wraps it at
+   * rest via {@link HpcTransport.keyStore}). */
+  privateOpenssh: string
+}
+
 /** Result of reading a (possibly truncated) remote text file. */
 export interface SftpReadResult {
   /** UTF-8 (lossy) decoded contents, capped at `maxBytes` when provided. */
@@ -162,6 +171,34 @@ export interface HpcTransport {
 
   /** Rename / move a remote path. */
   sftpRename(sessionId: string, from: string, to: string): Promise<void>
+
+  // ─── SSH-key passwordless login (mobile / tauri-ssh only; HTTP shim throws) ───
+
+  /**
+   * Generate a fresh ed25519 SSH keypair ON THE DEVICE. Ptyless. Returns both
+   * halves in OpenSSH wire form; the caller installs the public half via
+   * {@link installPubkey} and persists the private half via {@link keyStore}.
+   */
+  keygen(): Promise<GeneratedKeyPair>
+
+  /**
+   * Idempotently append `publicOpenssh` to the cluster's
+   * `~/.ssh/authorized_keys` over the live session (creates `~/.ssh` 700,
+   * `authorized_keys` 600; skips a duplicate line). Rejects if the remote
+   * command fails.
+   */
+  installPubkey(sessionId: string, publicOpenssh: string): Promise<void>
+
+  /**
+   * Persist a private key wrapped at rest under the app data dir, keyed by an
+   * opaque `endpointKey` (e.g. `host:port:username`). On Android the wrapping
+   * key is intended to be Keystore-held (hardware-backed); the current build
+   * uses a software AES-256-GCM envelope (see deploy/android/README.md).
+   */
+  keyStore(endpointKey: string, privateOpenssh: string): Promise<void>
+
+  /** Load + unwrap a previously-stored private key, or `null` if none stored. */
+  keyLoad(endpointKey: string): Promise<string | null>
 }
 
 /**
