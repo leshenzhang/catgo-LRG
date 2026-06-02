@@ -13,6 +13,35 @@
   import MobileTerminal from './MobileTerminal.svelte'
 
   let session_id = $state<string | null>(null)
+  let shell_el: HTMLDivElement | undefined = $state()
+
+  // Keep the shell sized to the VISUAL viewport so the soft keyboard never
+  // overlaps the terminal. `100dvh` (the CSS fallback below) excludes browser
+  // chrome but NOT the IME inset on Android WebView, so when the keyboard opens
+  // the terminal would otherwise stay full-height and get covered. Binding the
+  // root height to `visualViewport.height` shrinks the whole column the moment
+  // the keyboard appears; MobileTerminal's ResizeObserver then re-fits xterm
+  // above it. `offsetTop` pins the column when the WebView pans rather than
+  // resizing. Desktop is unaffected — this component only mounts on mobile.
+  $effect(() => {
+    const vv = typeof window !== `undefined` ? window.visualViewport : null
+    const el = shell_el
+    if (!vv || !el) return
+
+    const apply = (): void => {
+      el.style.height = `${vv.height}px`
+      el.style.transform = vv.offsetTop ? `translateY(${vv.offsetTop}px)` : ``
+    }
+    apply()
+    vv.addEventListener(`resize`, apply)
+    vv.addEventListener(`scroll`, apply)
+    return () => {
+      vv.removeEventListener(`resize`, apply)
+      vv.removeEventListener(`scroll`, apply)
+      el.style.height = ``
+      el.style.transform = ``
+    }
+  })
 
   function on_connected(id: string): void {
     session_id = id
@@ -26,7 +55,7 @@
   }
 </script>
 
-<div class="mobile-shell">
+<div class="mobile-shell" bind:this={shell_el}>
   {#if session_id}
     <header class="ms-header">
       <span class="ms-title">SSH session</span>

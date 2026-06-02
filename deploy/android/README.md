@@ -112,6 +112,61 @@ pnpm tauri android init
 `init` after a fresh clone. The reverse-DNS application id is taken from
 `bundle.identifier` (`com.catgo.app`).
 
+## 2b. Post-init native patches (REQUIRED — re-apply after every `init`)
+
+`tauri android init` regenerates the native project from the CLI templates, so
+the two edits below must be re-applied after each `init`. Without them the soft
+keyboard covers the terminal's input line on a real device (the desktop/emulator
+path can mask it). Both are grounded in the upstream keyboard-inset issues:
+tauri-apps/tauri [#7868] / [#10631] and the official manifest fix [PR #13277].
+
+[#7868]: https://github.com/tauri-apps/tauri/issues/7868
+[#10631]: https://github.com/tauri-apps/tauri/issues/10631
+[PR #13277]: https://github.com/tauri-apps/tauri/pull/13277
+
+**(1) `app/src/main/AndroidManifest.xml`** — add `windowSoftInputMode` to the
+`.MainActivity` `<activity>` (matches upstream PR #13277):
+
+```xml
+<activity
+    android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+    android:windowSoftInputMode="adjustResize"
+    android:launchMode="singleTask"
+    ...
+```
+
+**(2) `app/src/main/java/com/catgo/app/MainActivity.kt`** — `adjustResize` alone
+does NOT resize the window because the Tauri template calls `enableEdgeToEdge()`
+(`setDecorFitsSystemWindows(false)`), so the IME is drawn over the WebView.
+Consume the IME inset as bottom padding so the WebView shrinks above the
+keyboard; the frontend (`MobileShell.svelte`) then re-fits xterm via
+`visualViewport`:
+
+```kotlin
+package com.catgo.app
+
+import android.os.Bundle
+import android.view.View
+import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+
+class MainActivity : TauriActivity() {
+  override fun onCreate(savedInstanceState: Bundle?) {
+    enableEdgeToEdge()
+    super.onCreate(savedInstanceState)
+
+    val content = findViewById<View>(android.R.id.content)
+    ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
+      val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+      val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
+      v.setPadding(0, 0, 0, maxOf(ime, bars))
+      insets
+    }
+  }
+}
+```
+
 ## 3. Run on an emulator / device (dev)
 
 ```bash

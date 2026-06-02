@@ -49,7 +49,7 @@ pub fn map_prompts(prompts: &[Prompt]) -> Vec<OtpPrompt> {
 
 /// Authentication method selector sent from the frontend.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "lowercase", tag = "method")]
+#[serde(rename_all = "kebab-case", tag = "method")]
 pub enum AuthConfig {
     /// Username + password.
     Password { password: String },
