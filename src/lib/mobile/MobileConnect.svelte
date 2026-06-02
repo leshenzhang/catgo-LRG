@@ -55,6 +55,36 @@
   let otp_prompts = $state<OtpPrompt[]>([])
   let otp_instructions = $state(``)
 
+  // ─── Saved-password / OTP-only reconnect ───
+  // A password loaded from the encrypted store for the picked connection; when a
+  // password prompt arrives it is auto-answered so the user only types the OTP.
+  let auto_password = $state(``)
+  // Whether THIS connect used a saved password (so we don't re-offer to save it).
+  let used_saved_pw = false
+  // The password actually used this connect (form value or a keyboard-interactive
+  // response), captured so we can offer to persist it after success.
+  let captured_password = ``
+  // Post-success "save password?" prompt, parked until the user decides so we
+  // stay mounted (calling on_connected swaps us out).
+  let save_prompt_visible = $state(false)
+  let pending_session = ``
+  let pending_pw = ``
+
+  /** Per-endpoint key for the encrypted password store (no method in the key —
+   * the password is the same regardless of the method tried). */
+  function endpoint_pw_key(): string {
+    return `pw:${host.trim()}:${port}:${username.trim()}`
+  }
+
+  /** A prompt that asks for the account PASSWORD (not the 2FA passcode). */
+  function is_password_prompt(p: OtpPrompt): boolean {
+    return (
+      !p.echo &&
+      /pass\s*word/i.test(p.prompt) &&
+      !/duo|passcode|one.?time|\botp\b|verification|token/i.test(p.prompt)
+    )
+  }
+
   // Load the saved-connection list and prefill the form from the most recent.
   // NOTE: read the fresh list into a LOCAL — never read `saved` back inside this
   // effect. `loadConnections()` returns a new array each call, so writing AND
@@ -74,7 +104,8 @@
     }
   })
 
-  /** Fill the form from a saved connection (tap-to-reconnect). */
+  /** Fill the form from a saved connection (tap-to-reconnect), and load its
+   * stored password (if any) so the reconnect only needs the OTP. */
   function pick_saved(c: SavedConnection): void {
     host = c.host
     port = c.port
@@ -82,6 +113,15 @@
     method = c.method
     key_path = c.keyPath ?? ``
     error_msg = ``
+    auto_password = ``
+    transport
+      .keyLoad(`pw:${c.host}:${c.port}:${c.username}`)
+      .then((pw) => {
+        if (pw) auto_password = pw
+      })
+      .catch(() => {
+        /* no stored password / desktop transport — type it manually */
+      })
   }
 
   /** Delete a saved connection (does not touch any stored key material). */
@@ -108,10 +148,19 @@
     instructions: string
   }): void {
     if (r.needsOtp) {
-      // Show (or re-show) the dialog with this round's prompts.
       otp_pending_id = r.pendingId
       otp_prompts = r.prompts
       otp_instructions = r.instructions
+      // OTP-only reconnect: if this round is just the account-password prompt and
+      // we have a saved password, answer it silently and only surface later
+      // rounds (the Duo passcode) to the user.
+      if (auto_password && r.prompts.length === 1 && is_password_prompt(r.prompts[0])) {
+        used_saved_pw = true
+        const pw = auto_password
+        auto_password = ``
+        void submit_otp([pw])
+        return
+      }
       otp_visible = true
       otp_busy = false
       return
@@ -120,6 +169,15 @@
       otp_visible = false
       otp_busy = false
       persist_non_secrets()
+      // Offer to save the password (once) so the next reconnect is OTP-only.
+      // Park until the user decides — calling on_connected swaps us out.
+      if (captured_password && !used_saved_pw) {
+        pending_session = r.sessionId
+        pending_pw = captured_password
+        captured_password = ``
+        save_prompt_visible = true
+        return
+      }
       on_connected?.(r.sessionId)
       return
     }
@@ -133,6 +191,8 @@
     if (connecting) return
     error_msg = ``
     connecting = true
+    used_saved_pw = false
+    captured_password = method === `password` ? password : ``
     try {
       const r = await transport.connect({
         host: host.trim(),
@@ -160,6 +220,10 @@
   async function submit_otp(responses: string[]): Promise<void> {
     otp_busy = true
     error_msg = ``
+    // Remember the response to a password prompt so we can offer to save it.
+    otp_prompts.forEach((p, i) => {
+      if (is_password_prompt(p) && responses[i]) captured_password = responses[i]
+    })
     try {
       const r = await transport.submitOtp(otp_pending_id, responses)
       apply_result(r)
@@ -177,6 +241,24 @@
     otp_prompts = []
     otp_instructions = ``
     error_msg = `Authentication cancelled.`
+  }
+
+  function finish_connect(): void {
+    save_prompt_visible = false
+    const id = pending_session
+    pending_session = ``
+    pending_pw = ``
+    on_connected?.(id)
+  }
+
+  /** Save the password (encrypted) for OTP-only reconnect, then continue. */
+  async function save_password_yes(): Promise<void> {
+    try {
+      await transport.keyStore(endpoint_pw_key(), pending_pw)
+    } catch {
+      /* store unavailable — proceed without saving */
+    }
+    finish_connect()
   }
 
   const can_submit = $derived(
@@ -318,7 +400,77 @@
   />
 {/if}
 
+{#if save_prompt_visible}
+  <div class="sp-overlay" role="dialog" aria-modal="true">
+    <div class="sp-card">
+      <div class="sp-title">Save password for this cluster?</div>
+      <div class="sp-body">
+        Next time you connect to <b>{username}@{host}</b> you'll only need the
+        one-time passcode (OTP). The password is encrypted on this device.
+      </div>
+      <div class="sp-actions">
+        <button type="button" class="sp-no" onclick={finish_connect}>Not now</button>
+        <button type="button" class="sp-yes" onclick={save_password_yes}>Save password</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
+  .sp-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.6);
+  }
+  .sp-card {
+    width: 100%;
+    max-width: 420px;
+    padding: 20px;
+    background: var(--surface-bg, #1a1a2e);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+  }
+  .sp-title {
+    font-size: 1.05em;
+    font-weight: 600;
+    color: var(--text-color, #e0e0e0);
+    margin-bottom: 10px;
+  }
+  .sp-body {
+    font-size: 0.9em;
+    line-height: 1.5;
+    color: var(--text-color-muted, #cbd5e1);
+    margin-bottom: 18px;
+  }
+  .sp-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .sp-no,
+  .sp-yes {
+    min-height: 44px;
+    padding: 0 16px;
+    font-size: 15px;
+    font-weight: 600;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .sp-no {
+    color: var(--text-color-muted, #94a3b8);
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+  }
+  .sp-yes {
+    color: #fff;
+    background: var(--accent-color, #0a84ff);
+    border: 1px solid var(--accent-color, #0a84ff);
+  }
   .connect-wrap {
     display: flex;
     align-items: flex-start;

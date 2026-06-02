@@ -332,6 +332,18 @@
     position: relative;
     display: flex;
   }
+  /* The editor's root (.structure-main) defaults to height:500px via
+     --struct-height; override it so it fills the pane (no black gap / clipping
+     in any layout). */
+  .mw-struct {
+    --struct-height: 100%;
+    --struct-width: 100%;
+    overflow: hidden;
+  }
+  .mw-struct :global(.structure-main) {
+    height: 100%;
+    width: 100%;
+  }
   .mw-body.split-h .mw-struct,
   .mw-body.split-v .mw-struct {
     border-right: 1px solid rgba(255, 255, 255, 0.08);
