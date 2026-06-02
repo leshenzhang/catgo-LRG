@@ -1,0 +1,113 @@
+/**
+ * 中文 — 移动端 UI 文本 (src/lib/mobile/*)。
+ *
+ * 覆盖移动端工作区：入口选择、顶部操作栏、SSH 连接表单、OTP 对话框、
+ * SSH 密钥引导、远程文件浏览器以及只读文件查看器。
+ * 通过 `load_i18n_module('mobile')` 按需加载。
+ */
+
+const mobile: Record<string, string> = {
+  // ── 入口选择 (MobileWorkspace) ───────────────────────────────────────
+  choose_prompt:          `你想做什么？`,
+  choice_structure_main:  `查看 / 编辑结构`,
+  choice_structure_desc:  `打开本地文件 — 无需连接集群`,
+  choice_database_main:   `从数据库导入`,
+  choice_database_desc:   `搜索 OPTIMADE / Materials Project / PubChem`,
+  choice_connect_main:    `连接到集群`,
+  choice_connect_desc:    `SSH 终端 + 远程文件`,
+
+  // ── 顶部操作栏 (MobileWorkspace) ─────────────────────────────────────
+  tab_structure:          `结构`,
+  tab_split_stacked:      `分屏（上下）`,
+  tab_split_side:         `分屏（左右）`,
+  tab_terminal:           `终端`,
+  action_remote_files:    `远程文件`,
+  action_open_local:      `打开本地文件`,
+  action_import_database: `从数据库导入`,
+  action_save_structure:  `保存结构`,
+  action_disconnect:      `断开连接`,
+
+  // ── 结构面板 (MobileWorkspace) ───────────────────────────────────────
+  no_structure_loaded:    `未加载结构。`,
+  open_local_file:        `打开本地文件`,
+  open_from_cluster:      `从集群打开`,
+
+  // ── 保存 / 提示 (MobileWorkspace) ────────────────────────────────────
+  could_not_parse:        `无法将 {filename} 解析为结构。`,
+  saved_to:               `已保存到 {path}`,
+  save_failed_reason:     `保存失败：{reason}`,
+  downloaded:             `已下载 {filename}`,
+  remote_files_title:     `远程文件`,
+
+  // ── 连接表单 (MobileConnect) ─────────────────────────────────────────
+  connect_title:          `连接到集群`,
+  saved_label:            `已保存`,
+  new_connection:         `+ 新建`,
+  remove_saved_connection: `删除已保存的连接`,
+  field_name:             `名称（可选）`,
+  field_name_placeholder: `Expanse`,
+  field_host:             `主机`,
+  field_host_placeholder: `login.cluster.edu`,
+  field_port:             `端口`,
+  field_username:         `用户名`,
+  field_auth_method:      `认证方式`,
+  method_password:        `密码`,
+  method_publickey:       `公钥`,
+  method_keyboard:        `键盘交互`,
+  field_password:         `密码`,
+  field_private_key_path: `私钥路径`,
+  field_passphrase:       `私钥口令（可选）`,
+  keyboard_hint:          `连接后系统会提示你输入所需的验证码。`,
+  connecting:             `连接中…`,
+  connect_action:         `连接`,
+  connection_failed:      `连接失败。`,
+  auth_cancelled:         `认证已取消。`,
+
+  // ── 保存密码提示 (MobileConnect) ─────────────────────────────────────
+  save_pw_title:          `保存此集群的密码？`,
+  save_pw_body:           `下次连接到 {user} 时，你只需输入一次性验证码（OTP）。密码会加密保存在本设备上。`,
+  save_pw_not_now:        `暂不`,
+  save_pw_save:           `保存密码`,
+
+  // ── OTP 对话框 (OtpDialog) ───────────────────────────────────────────
+  otp_title:              `需要验证`,
+  otp_cancel:             `取消`,
+  otp_submit:             `提交`,
+  otp_submitting:         `提交中…`,
+
+  // ── 免密登录引导 (KeySetup) ──────────────────────────────────────────
+  ks_aria:                `设置免密登录`,
+  ks_title:               `设置免密登录？`,
+  ks_body:                `在本设备生成一个 SSH 密钥并安装到 {user}。以后连接即可使用密钥而非密码。私钥在设备本地生成并加密存储 — 永远不会以未加密形式离开你的手机。`,
+  ks_generating:          `正在本设备生成密钥…`,
+  ks_installing:          `正在将公钥安装到 {host}…`,
+  ks_storing:             `正在本设备安全存储私钥…`,
+  ks_done:                `免密登录已设置完成。`,
+  ks_close:               `关闭`,
+  ks_not_now:             `暂不`,
+  ks_try_again:           `重试`,
+  ks_working:             `处理中…`,
+  ks_set_up:              `设置`,
+
+  // ── 文件浏览器 (MobileFiles) ─────────────────────────────────────────
+  loading:                `加载中…`,
+  empty_directory:        `空目录`,
+  parent:                 `上级`,
+  path_placeholder:       `跳转到路径…  /home/{user}/project`,
+  go:                     `跳转`,
+  aria_path:              `路径`,
+  aria_refresh:           `刷新`,
+
+  // ── 文件查看器 (MobileFileViewer) ────────────────────────────────────
+  back:                   `返回`,
+  back_to_files:          `返回文件列表`,
+  binary_file:            `二进制文件`,
+  binary_note:            `{size} — 不显示（非文本或过大无法预览）。`,
+  truncated_note:         `仅显示前 {size} — 文件更大，已被截断。`,
+  save:                   `保存`,
+  saving:                 `保存中…`,
+  saved:                  `已保存`,
+  save_failed:            `保存失败`,
+}
+
+export default mobile

@@ -62,6 +62,7 @@ const _importers: Record<Locale, Record<string, ModuleImporter>> = {
     structure: () => import('./en/structure'),
     workflow:  () => import('./en/workflow'),
     chat:      () => import('./en/chat'),
+    mobile:    () => import('./en/mobile'),
   },
   zh: {
     common:    () => import('./zh/common'),
@@ -70,6 +71,7 @@ const _importers: Record<Locale, Record<string, ModuleImporter>> = {
     structure: () => import('./zh/structure'),
     workflow:  () => import('./zh/workflow'),
     chat:      () => import('./zh/chat'),
+    mobile:    () => import('./zh/mobile'),
   },
 }
 

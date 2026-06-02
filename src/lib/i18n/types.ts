@@ -25,6 +25,7 @@ export type TranslationModule =
   | 'structure'
   | 'workflow'
   | 'chat'
+  | 'mobile'
 
 /** Parameters that can be interpolated into a translation string via `{key}`. */
 export type InterpolationParams = Record<string, string | number>

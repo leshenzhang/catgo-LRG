@@ -18,6 +18,7 @@
   import { transport, type SftpEntry } from '$lib/api/transport'
   import MobileFileViewer from './MobileFileViewer.svelte'
   import { humanSize, joinPath, parentPath, isStructureName } from './files-util'
+  import { t } from '$lib/i18n/index.svelte'
 
   interface Props {
     /** Live HPC session id (from MobileConnect). */
@@ -174,7 +175,7 @@
 
 <div class="mobile-files">
   <header class="mf-bar">
-    <nav class="mf-crumbs" aria-label="Path">
+    <nav class="mf-crumbs" aria-label={t(`mobile.aria_path`)}>
       {#each crumbs as c, i (c.path)}
         {#if i > 0}<span class="mf-sep">/</span>{/if}
         <button
@@ -190,7 +191,7 @@
     <button
       type="button"
       class="mf-refresh"
-      aria-label="Refresh"
+      aria-label={t(`mobile.aria_refresh`)}
       onclick={refresh}
       disabled={status === `loading`}
     >
@@ -211,15 +212,15 @@
       autocapitalize="off"
       autocorrect="off"
       spellcheck="false"
-      placeholder="Go to path…  /home/{`{user}`}/project"
+      placeholder={t(`mobile.path_placeholder`, { user: `{user}` })}
       bind:value={path_input}
     />
-    <button type="submit" class="mf-go" disabled={!path_input.trim()}>Go</button>
+    <button type="submit" class="mf-go" disabled={!path_input.trim()}>{t(`mobile.go`)}</button>
   </form>
 
   <div class="mf-body">
     {#if status === `loading` && entries.length === 0}
-      <div class="mf-status">Loading…</div>
+      <div class="mf-status">{t(`mobile.loading`)}</div>
     {:else if status === `error`}
       <div class="mf-error">{error_msg}</div>
     {:else}
@@ -229,7 +230,7 @@
             <button type="button" class="mf-row mf-up" onclick={go_up}>
               <span class="mf-icon">↰</span>
               <span class="mf-name">..</span>
-              <span class="mf-meta">parent</span>
+              <span class="mf-meta">{t(`mobile.parent`)}</span>
             </button>
           </li>
         {/if}
@@ -245,7 +246,7 @@
           </li>
         {/each}
         {#if sorted.length === 0}
-          <li class="mf-empty">Empty directory</li>
+          <li class="mf-empty">{t(`mobile.empty_directory`)}</li>
         {/if}
       </ul>
     {/if}

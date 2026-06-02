@@ -41,7 +41,7 @@ export function parentPath(path: string): string {
 const BINARY_EXTS = new Set([
   `png`, `jpg`, `jpeg`, `gif`, `bmp`, `webp`, `ico`, `tiff`, `svg`,
   `pdf`, `zip`, `gz`, `tgz`, `bz2`, `xz`, `7z`, `rar`, `tar`,
-  `so`, `o`, `a`, `dll`, `dylib`, `exe`, `bin`, `out`,
+  `so`, `dll`, `dylib`, `exe`, `bin`,
   `wav`, `mp3`, `mp4`, `mov`, `avi`, `mkv`, `flac`, `ogg`,
   `pyc`, `pyo`, `npy`, `npz`, `h5`, `hdf5`, `pt`, `pth`, `ckpt`,
   `db`, `sqlite`, `pickle`, `pkl`, `parquet`, `feather`, `wasm`,

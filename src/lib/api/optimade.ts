@@ -4,6 +4,7 @@
 declare const __CATGO_STATIC_ONLY__: boolean
 import { API_BASE as _DEFAULT_API } from './config'
 import { relay_fetch } from '$lib/chat/provider-routing'
+import { isMobile } from '$lib/api/transport'
 
 // API base URL - same as compute.ts
 let API_BASE = _DEFAULT_API
@@ -215,7 +216,11 @@ export async function fetch_optimade_providers(): Promise<OptimadeProvider[]> {
   // Project) and Alexandria allows browser requests directly, so search works
   // client-side (search_optimade_structures routes MP via relay_fetch).
   // PubChem is appended separately by the modal.
-  const is_static = typeof __CATGO_STATIC_ONLY__ !== `undefined` && __CATGO_STATIC_ONLY__
+  // Mobile (no Python backend) is treated like static-only: use the hardcoded
+  // provider list. The actual searches go DIRECT via relay_fetch (Tauri native
+  // HTTP, no CORS) so every provider works without the backend.
+  const is_static =
+    (typeof __CATGO_STATIC_ONLY__ !== `undefined` && __CATGO_STATIC_ONLY__) || isMobile()
   if (is_static) {
     cached_providers = STATIC_PROVIDERS
     providers_cache_time = now
@@ -254,7 +259,7 @@ export async function fetch_optimade_structure(
 ): Promise<OptimadeStructure | null> {
   const encoded_id = encode_structure_id(structure_id)
 
-  const is_static = typeof __CATGO_STATIC_ONLY__ !== `undefined` && __CATGO_STATIC_ONLY__
+  const is_static = (typeof __CATGO_STATIC_ONLY__ !== `undefined` && __CATGO_STATIC_ONLY__) || isMobile()
   let url: string
   if (vscode_api || is_static) {
     // Direct API call: need to resolve provider base URL and construct endpoint
@@ -297,7 +302,7 @@ export async function fetch_suggested_structures(
     let url: string
     let data: { data?: OptimadeStructure[] }
 
-    const is_static = typeof __CATGO_STATIC_ONLY__ !== `undefined` && __CATGO_STATIC_ONLY__
+    const is_static = (typeof __CATGO_STATIC_ONLY__ !== `undefined` && __CATGO_STATIC_ONLY__) || isMobile()
     if (vscode_api || is_static) {
       // Direct API call
       const provider_obj = providers.find(p => p.id === provider)
@@ -589,7 +594,7 @@ export async function search_optimade_structures(
       return result
     }
 
-    const is_static = typeof __CATGO_STATIC_ONLY__ !== `undefined` && __CATGO_STATIC_ONLY__
+    const is_static = (typeof __CATGO_STATIC_ONLY__ !== `undefined` && __CATGO_STATIC_ONLY__) || isMobile()
     const limit = options.limit ?? 20
     const offset = options.offset ?? 0
     const filter = build_optimade_filter(options)

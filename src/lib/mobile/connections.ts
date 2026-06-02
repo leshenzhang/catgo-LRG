@@ -22,6 +22,8 @@ export interface SavedConnection {
   method: HpcAuthMethod
   /** Private-key path (publickey method only); never the key material itself. */
   keyPath?: string
+  /** Optional user-given nickname shown instead of `user@host`. */
+  label?: string
   /** Epoch ms of the last successful connect — used for most-recent ordering. */
   lastUsed: number
 }
@@ -40,8 +42,9 @@ export function connectionId(
   return `${host}:${port}:${username}:${method}`
 }
 
-/** Human label for a saved connection (e.g. `gliu3@login.expanse.sdsc.edu`). */
+/** Display name: the user's custom label if set, else `user@host[:port]`. */
 export function connectionLabel(c: SavedConnection): string {
+  if (c.label && c.label.trim()) return c.label.trim()
   return c.port === 22 ? `${c.username}@${c.host}` : `${c.username}@${c.host}:${c.port}`
 }
 
@@ -93,7 +96,31 @@ function migrateLegacy(list: SavedConnection[]): SavedConnection[] {
 
 /** Load saved connections, most-recently-used first. */
 export function loadConnections(): SavedConnection[] {
-  const list = migrateLegacy(readRaw())
+  // Migrate the legacy single entry ONLY when the list has never been written
+  // (key absent). If the key exists — even as an empty `[]` because the user
+  // deleted everything — use it as-is, otherwise deleted entries would keep
+  // reappearing from the legacy key on every empty list.
+  let list: SavedConnection[]
+  const raw = (() => {
+    try {
+      return globalThis.localStorage?.getItem(STORAGE_KEY) ?? null
+    } catch {
+      return null
+    }
+  })()
+  if (raw == null) {
+    list = migrateLegacy([])
+    if (list.length) write(list)
+    // The legacy entry is now folded in (or absent); drop it so it can never
+    // resurrect a deleted connection.
+    try {
+      globalThis.localStorage?.removeItem(LEGACY_KEY)
+    } catch {
+      /* non-fatal */
+    }
+  } else {
+    list = readRaw()
+  }
   return [...list].sort((a, b) => b.lastUsed - a.lastUsed)
 }
 
@@ -110,7 +137,7 @@ function write(list: SavedConnection[]): void {
  * Returns the new most-recent-first list.
  */
 export function upsertConnection(
-  fields: { host: string; port: number; username: string; method: HpcAuthMethod; keyPath?: string },
+  fields: { host: string; port: number; username: string; method: HpcAuthMethod; keyPath?: string; label?: string },
   now: number,
 ): SavedConnection[] {
   const id = connectionId(fields.host, fields.port, fields.username, fields.method)
@@ -122,6 +149,7 @@ export function upsertConnection(
     username: fields.username,
     method: fields.method,
     keyPath: fields.keyPath || undefined,
+    label: fields.label?.trim() || undefined,
     lastUsed: now,
   }
   const next = [entry, ...others].sort((a, b) => b.lastUsed - a.lastUsed)

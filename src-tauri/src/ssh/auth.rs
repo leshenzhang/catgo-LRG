@@ -136,7 +136,13 @@ pub async fn ssh_connect(
         .join("ssh_known_hosts.json");
     let key_mismatch = Arc::new(AtomicBool::new(false));
 
-    let ssh_config = Arc::new(client::Config::default());
+    // Keepalive so an idle session stays alive for ControlMaster-style reuse
+    // (the frontend re-picks a still-live connection instead of re-authenticating).
+    let ssh_config = Arc::new(client::Config {
+        keepalive_interval: Some(std::time::Duration::from_secs(30)),
+        keepalive_max: 3,
+        ..Default::default()
+    });
     let handler = MobileHandler::new(host.clone(), port, pin_store, key_mismatch.clone());
     let addr = (host.as_str(), port);
 

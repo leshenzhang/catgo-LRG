@@ -1647,7 +1647,23 @@ export function create_interaction_controller(deps: InteractionDeps) {
     get is_box_selecting() { return is_box_selecting },
     /** Touch interaction mode: plain-drag performs box-select / move / rotate. */
     get touch_mode() { return touch_mode },
-    set touch_mode(v: 'none' | 'box' | 'move' | 'rotate') { touch_mode = v },
+    set touch_mode(v: 'none' | 'box' | 'move' | 'rotate') {
+      // Switching (or leaving) a touch interaction mode must never leave the
+      // camera frozen: move/rotate mode disables the orbit controls on
+      // pointerdown so a drag manipulates atoms instead of the view, and that
+      // disable is normally undone by finish_drag/finish_rotation on pointerup.
+      // If the user exits the mode without a clean pointerup, the controls stay
+      // off and the whole structure can't be rotated until a remount. Commit any
+      // in-progress interaction and force the controls back on here.
+      if (v !== touch_mode) {
+        if (is_dragging_atom) finish_drag()
+        if (is_rotating_atoms) finish_rotation()
+        is_box_selecting = false
+        const oc = deps.get_orbit_controls()
+        if (oc) oc.enabled = true
+      }
+      touch_mode = v
+    },
     get box_select_start() { return box_select_start },
     get box_select_end() { return box_select_end },
     get last_box_select_commit_ms() { return last_box_select_commit_ms },

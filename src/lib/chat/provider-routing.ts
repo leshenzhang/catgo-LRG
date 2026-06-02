@@ -1,4 +1,5 @@
 import { STATIC_ONLY } from '$lib/api/config'
+import { isMobile } from '$lib/api/transport'
 import type { ChatConfig } from './types'
 import { SDK_PROVIDERS } from './types'
 
@@ -29,7 +30,21 @@ export function relay_url(url: string): string {
 }
 
 /** A fetch wrapper that transparently routes CORS-blocked hosts via the relay. */
-export function relay_fetch(url: string, init?: RequestInit): Promise<Response> {
+export async function relay_fetch(url: string, init?: RequestInit): Promise<Response> {
+  // On mobile (Tauri) there is no browser CORS — the native HTTP plugin fetches
+  // from Rust, so CORS-blocked sources (Materials Project, the OPTIMADE provider
+  // list, any provider that omits Access-Control-Allow-Origin) work DIRECTLY
+  // with no relay and no backend. This is why the database showed only PubChem.
+  if (isMobile()) {
+    try {
+      const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
+      return await tauriFetch(url, init)
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`[CatGo] tauri http fetch failed, falling back:`, url, e)
+      // Plugin unavailable (e.g. plain browser) — fall back to the relay path.
+    }
+  }
   return fetch(needs_relay(url) ? relay_url(url) : url, init)
 }
 

@@ -15,6 +15,7 @@
   convenience. NEVER persists passwords, passphrases, or OTP answers.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { transport, type HpcAuthMethod, type OtpPrompt } from '$lib/api/transport'
   import OtpDialog from './OtpDialog.svelte'
   import {
@@ -24,6 +25,8 @@
     connectionLabel,
     type SavedConnection,
   } from './connections'
+  import { endpointKey, reuseSession, rememberSession } from './sessions'
+  import { t } from '$lib/i18n/index.svelte'
 
   interface Props {
     /** Emitted with the live session id once authentication completes. */
@@ -36,6 +39,7 @@
   let saved = $state<SavedConnection[]>([])
 
   // ─── Form state ───
+  let label = $state(``)
   let host = $state(``)
   let port = $state(22)
   let username = $state(``)
@@ -85,28 +89,32 @@
     )
   }
 
-  // Load the saved-connection list and prefill the form from the most recent.
-  // NOTE: read the fresh list into a LOCAL — never read `saved` back inside this
-  // effect. `loadConnections()` returns a new array each call, so writing AND
-  // reading `saved` here would make the effect depend on a value it just changed
-  // → infinite re-run (svelte effect_update_depth_exceeded). Only `host` is a
-  // tracked read, and the `!host` guard makes it converge after the first set.
+  // Prefill the form from the most-recent saved connection — but ONLY on first
+  // mount. `untrack` + the `did_prefill` guard stop the effect from depending on
+  // `host`; otherwise clearing the form (the "+ New" button) would set host=``,
+  // re-run the effect, and immediately refill it (New appears to do nothing).
+  let did_prefill = false
   $effect(() => {
     const list = loadConnections()
     saved = list
-    const recent = list[0]
-    if (recent && !host) {
+    untrack(() => {
+      if (did_prefill) return
+      did_prefill = true
+      const recent = list[0]
+      if (!recent || host) return
+      label = recent.label ?? ``
       host = recent.host
       port = recent.port
       username = recent.username
       method = recent.method
       if (recent.keyPath) key_path = recent.keyPath
-    }
+    })
   })
 
   /** Fill the form from a saved connection (tap-to-reconnect), and load its
    * stored password (if any) so the reconnect only needs the OTP. */
   function pick_saved(c: SavedConnection): void {
+    label = c.label ?? ``
     host = c.host
     port = c.port
     username = c.username
@@ -124,6 +132,21 @@
       })
   }
 
+  /** Clear the form to enter a brand-new cluster (the form otherwise prefills
+   * from the most-recent saved connection). */
+  function new_connection(): void {
+    label = ``
+    host = ``
+    port = 22
+    username = ``
+    method = `keyboard-interactive`
+    key_path = ``
+    password = ``
+    passphrase = ``
+    auto_password = ``
+    error_msg = ``
+  }
+
   /** Delete a saved connection (does not touch any stored key material). */
   function delete_saved(id: string, e: Event): void {
     e.stopPropagation()
@@ -132,7 +155,7 @@
 
   function persist_non_secrets(): void {
     saved = upsertConnection(
-      { host, port, username, method, keyPath: key_path },
+      { host, port, username, method, keyPath: key_path, label },
       Date.now(),
     )
   }
@@ -169,6 +192,8 @@
       otp_visible = false
       otp_busy = false
       persist_non_secrets()
+      // Register the live session so a later reconnect to this endpoint reuses it.
+      rememberSession(endpointKey(host.trim(), port, username.trim()), r.sessionId)
       // Offer to save the password (once) so the next reconnect is OTP-only.
       // Park until the user decides — calling on_connected swaps us out.
       if (captured_password && !used_saved_pw) {
@@ -184,7 +209,7 @@
     // Not connected and no OTP round => authentication failed / refused.
     otp_visible = false
     otp_busy = false
-    error_msg = r.message || `Connection failed.`
+    error_msg = r.message || t(`mobile.connection_failed`)
   }
 
   async function connect(): Promise<void> {
@@ -193,6 +218,34 @@
     connecting = true
     used_saved_pw = false
     captured_password = method === `password` ? password : ``
+    // ControlMaster-style reuse: if a still-live session exists for this
+    // endpoint, reuse it (no re-auth / no OTP) instead of connecting again.
+    try {
+      const reused = await reuseSession(endpointKey(host.trim(), port, username.trim()))
+      if (reused) {
+        persist_non_secrets()
+        connecting = false
+        on_connected?.(reused)
+        return
+      }
+    } catch {
+      /* fall through to a fresh connect */
+    }
+    // Robustly load a saved password for THIS endpoint (so OTP-only reconnect
+    // works even when the form was filled manually, not via a saved-list tap).
+    if (!auto_password) {
+      try {
+        const pw = await transport.keyLoad(endpoint_pw_key())
+        if (pw) {
+          auto_password = pw
+          // password method: fill the form value directly; keyboard-interactive
+          // uses auto_password to answer the password prompt round.
+          if (method === `password` && !password) password = pw
+        }
+      } catch {
+        /* no stored password / desktop transport */
+      }
+    }
     try {
       const r = await transport.connect({
         host: host.trim(),
@@ -240,7 +293,7 @@
     otp_pending_id = ``
     otp_prompts = []
     otp_instructions = ``
-    error_msg = `Authentication cancelled.`
+    error_msg = t(`mobile.auth_cancelled`)
   }
 
   function finish_connect(): void {
@@ -270,11 +323,14 @@
 
 <div class="connect-wrap">
   <div class="connect-card">
-    <div class="connect-title">Connect to cluster</div>
+    <div class="connect-title">{t(`mobile.connect_title`)}</div>
 
     {#if saved.length > 0}
       <div class="saved-list">
-        <span class="saved-label">Saved</span>
+        <div class="saved-head">
+          <span class="saved-label">{t(`mobile.saved_label`)}</span>
+          <button type="button" class="saved-new" onclick={new_connection}>{t(`mobile.new_connection`)}</button>
+        </div>
         {#each saved as c (c.id)}
           <div
             class="saved-row"
@@ -293,7 +349,7 @@
             <button
               type="button"
               class="saved-del"
-              aria-label="Remove saved connection"
+              aria-label={t(`mobile.remove_saved_connection`)}
               onclick={(e) => delete_saved(c.id, e)}
             >
               ✕
@@ -310,26 +366,38 @@
         if (can_submit) connect()
       }}
     >
+      <label class="field name-field">
+        <span>{t(`mobile.field_name`)}</span>
+        <input
+          type="text"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder={t(`mobile.field_name_placeholder`)}
+          bind:value={label}
+        />
+      </label>
+
       <label class="field host-field">
-        <span>Host</span>
+        <span>{t(`mobile.field_host`)}</span>
         <input
           type="text"
           inputmode="url"
           autocapitalize="off"
           autocorrect="off"
           spellcheck="false"
-          placeholder="login.cluster.edu"
+          placeholder={t(`mobile.field_host_placeholder`)}
           bind:value={host}
         />
       </label>
 
       <label class="field port-field">
-        <span>Port</span>
+        <span>{t(`mobile.field_port`)}</span>
         <input type="number" min="1" max="65535" bind:value={port} />
       </label>
 
       <label class="field user-field">
-        <span>Username</span>
+        <span>{t(`mobile.field_username`)}</span>
         <input
           type="text"
           autocapitalize="off"
@@ -340,17 +408,17 @@
       </label>
 
       <label class="field method-field">
-        <span>Auth method</span>
+        <span>{t(`mobile.field_auth_method`)}</span>
         <select bind:value={method}>
-          <option value="password">Password</option>
-          <option value="publickey">Public key</option>
-          <option value="keyboard-interactive">Keyboard-interactive</option>
+          <option value="password">{t(`mobile.method_password`)}</option>
+          <option value="publickey">{t(`mobile.method_publickey`)}</option>
+          <option value="keyboard-interactive">{t(`mobile.method_keyboard`)}</option>
         </select>
       </label>
 
       {#if method === `password`}
         <label class="field">
-          <span>Password</span>
+          <span>{t(`mobile.field_password`)}</span>
           <input
             type="password"
             autocomplete="current-password"
@@ -359,7 +427,7 @@
         </label>
       {:else if method === `publickey`}
         <label class="field">
-          <span>Private key path</span>
+          <span>{t(`mobile.field_private_key_path`)}</span>
           <input
             type="text"
             autocapitalize="off"
@@ -370,12 +438,12 @@
           />
         </label>
         <label class="field">
-          <span>Passphrase (optional)</span>
+          <span>{t(`mobile.field_passphrase`)}</span>
           <input type="password" autocomplete="off" bind:value={passphrase} />
         </label>
       {:else}
         <div class="method-hint">
-          You'll be prompted for any codes after connecting.
+          {t(`mobile.keyboard_hint`)}
         </div>
       {/if}
 
@@ -384,7 +452,7 @@
       {/if}
 
       <button type="submit" class="connect-btn" disabled={!can_submit}>
-        {connecting ? `Connecting…` : `Connect`}
+        {connecting ? t(`mobile.connecting`) : t(`mobile.connect_action`)}
       </button>
     </form>
   </div>
@@ -403,14 +471,13 @@
 {#if save_prompt_visible}
   <div class="sp-overlay" role="dialog" aria-modal="true">
     <div class="sp-card">
-      <div class="sp-title">Save password for this cluster?</div>
+      <div class="sp-title">{t(`mobile.save_pw_title`)}</div>
       <div class="sp-body">
-        Next time you connect to <b>{username}@{host}</b> you'll only need the
-        one-time passcode (OTP). The password is encrypted on this device.
+        {t(`mobile.save_pw_body`, { user: `${username}@${host}` })}
       </div>
       <div class="sp-actions">
-        <button type="button" class="sp-no" onclick={finish_connect}>Not now</button>
-        <button type="button" class="sp-yes" onclick={save_password_yes}>Save password</button>
+        <button type="button" class="sp-no" onclick={finish_connect}>{t(`mobile.save_pw_not_now`)}</button>
+        <button type="button" class="sp-yes" onclick={save_password_yes}>{t(`mobile.save_pw_save`)}</button>
       </div>
     </div>
   </div>
@@ -505,9 +572,25 @@
     padding-bottom: 16px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
+  .saved-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
   .saved-label {
     font-size: 0.85em;
     color: var(--text-color-muted, #94a3b8);
+  }
+  .saved-new {
+    min-height: 32px;
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent-color, #3b82f6);
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 8px;
+    cursor: pointer;
   }
   .saved-row {
     display: flex;

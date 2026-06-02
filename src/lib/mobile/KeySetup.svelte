@@ -17,6 +17,7 @@
 -->
 <script lang="ts">
   import { transport } from '$lib/api/transport'
+  import { t } from '$lib/i18n/index.svelte'
 
   interface Props {
     /** Live SSH session id (from the just-completed connect). */
@@ -80,26 +81,23 @@
 
   const status_text = $derived(
     phase === `generating`
-      ? `Generating a key on this device…`
+      ? t(`mobile.ks_generating`)
       : phase === `installing`
-        ? `Installing the public key on ${host}…`
+        ? t(`mobile.ks_installing`, { host })
         : phase === `storing`
-          ? `Securing the private key on this device…`
+          ? t(`mobile.ks_storing`)
           : phase === `done`
-            ? `Passwordless login is set up.`
+            ? t(`mobile.ks_done`)
             : ``,
   )
 </script>
 
-<div class="ks-overlay" role="dialog" aria-modal="true" aria-label="Set up passwordless login">
+<div class="ks-overlay" role="dialog" aria-modal="true" aria-label={t(`mobile.ks_aria`)}>
   <div class="ks-card">
-    <div class="ks-title">Set up passwordless login?</div>
+    <div class="ks-title">{t(`mobile.ks_title`)}</div>
 
     <p class="ks-body">
-      Generate an SSH key on this device and install it on
-      <span class="ks-host">{username}@{host}</span>. Future connects can use the
-      key instead of a password. The private key is generated on-device and stored
-      encrypted — it never leaves your phone unprotected.
+      {t(`mobile.ks_body`, { user: `${username}@${host}` })}
     </p>
 
     {#if status_text}
@@ -115,11 +113,11 @@
 
     <div class="ks-actions">
       <button type="button" class="ks-btn skip" disabled={busy} onclick={skip}>
-        {phase === `done` ? `Close` : `Not now`}
+        {phase === `done` ? t(`mobile.ks_close`) : t(`mobile.ks_not_now`)}
       </button>
       {#if phase !== `done`}
         <button type="button" class="ks-btn go" disabled={busy} onclick={run_setup}>
-          {phase === `error` ? `Try again` : busy ? `Working…` : `Set up`}
+          {phase === `error` ? t(`mobile.ks_try_again`) : busy ? t(`mobile.ks_working`) : t(`mobile.ks_set_up`)}
         </button>
       {/if}
     </div>
@@ -157,10 +155,6 @@
     line-height: 1.5;
     color: var(--text-color-muted, #94a3b8);
     margin: 0 0 14px;
-  }
-  .ks-host {
-    color: var(--text-color, #e0e0e0);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   .ks-status {
     display: flex;

@@ -19,6 +19,11 @@ function is_ignorable_runtime_error(err: unknown) {
   const message = err instanceof Error ? err.message : String(err)
   return message === `ResizeObserver loop completed with undelivered notifications.`
     || message === `ResizeObserver loop limit exceeded`
+    // On mobile there is no Python/Node sidecar, so any code path that tries to
+    // spawn one fails with the shell plugin's "Scoped shell IO error: No such
+    // file or directory". That feature is simply unavailable on mobile — log it,
+    // but never tear down the whole app with a fatal error screen.
+    || message.includes(`Scoped shell IO error`)
 }
 
 function render_error(label: string, err: unknown) {
