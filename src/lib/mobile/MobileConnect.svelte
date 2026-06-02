@@ -56,9 +56,15 @@
   let otp_instructions = $state(``)
 
   // Load the saved-connection list and prefill the form from the most recent.
+  // NOTE: read the fresh list into a LOCAL — never read `saved` back inside this
+  // effect. `loadConnections()` returns a new array each call, so writing AND
+  // reading `saved` here would make the effect depend on a value it just changed
+  // → infinite re-run (svelte effect_update_depth_exceeded). Only `host` is a
+  // tracked read, and the `!host` guard makes it converge after the first set.
   $effect(() => {
-    saved = loadConnections()
-    const recent = saved[0]
+    const list = loadConnections()
+    saved = list
+    const recent = list[0]
     if (recent && !host) {
       host = recent.host
       port = recent.port

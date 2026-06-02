@@ -8,7 +8,7 @@
   import { parse_cube_header, cube_atoms_to_molecule } from '$lib/cube'
   import { API_BASE, STATIC_ONLY } from '$lib/api/config'
   import { isMobile } from '$lib/api/transport'
-  import MobileShell from '$lib/mobile/MobileShell.svelte'
+  import MobileWorkspace from '$lib/mobile/MobileWorkspace.svelte'
   import { check_tauri, init_tauri, read_dropped_paths as tauri_read_dropped_paths, pick_structure_paths as tauri_pick_structure_paths, pick_folder_paths as tauri_pick_folder_paths } from '$lib/io/tauri'
   import { decompress_file } from '$lib/io/decompress'
   import { is_trajectory_file, parse_trajectory_data } from '$lib/trajectory/parse'
@@ -128,13 +128,12 @@
   // ========== Popout / Sidebar / Pane / Layout / Export / DragDrop / Resize deps ==========
   let is_tauri = $state(false)
   let popout_chat_mode = $state(false)
-  // Mobile (iOS/Android Tauri) gate. On mobile we render the SAME structure
-  // editor as web/desktop (the backend probe returns false on mobile, so it
-  // runs WASM-only exactly like the no-backend web build); the native russh
-  // SSH/SFTP shell is reachable on top as a toggled overlay (mobile_panel_open)
-  // for remote file access. Evaluated once at module load; desktop is unaffected.
+  // Mobile (iOS/Android Tauri) gate. On mobile we render the purpose-built
+  // MobileWorkspace (terminal-first; structure editor + russh SSH terminal +
+  // remote files with switchable layouts), NOT the desktop tab/pane UI. The
+  // editor still runs backend-free (the probe returns false on mobile) just like
+  // the web build. Evaluated once at module load; desktop is unaffected.
   const is_mobile = isMobile()
-  let mobile_panel_open = $state(false)
   // Tab id the popout is mirroring. Parsed from the URL hash
   // (#chat?tab_id=structure-1). Used by ChatPane to filter BroadcastChannel
   // messages and to write incoming contexts into the correct slice.
@@ -1534,6 +1533,8 @@
 <StatusPopout />
 {:else if popout_doping_pt_mode}
 <DopingPTWindow />
+{:else if is_mobile}
+<MobileWorkspace />
 {:else}
 <div class="app-container">
 
@@ -2285,47 +2286,9 @@
 </div><!-- End app-container -->
 {/if}
 
-{#if is_mobile}
-  <!-- Floating button to open the native SSH/SFTP shell over the editor. -->
-  <button
-    class="mobile-ssh-fab"
-    aria-label="Remote cluster (SSH)"
-    onclick={() => (mobile_panel_open = !mobile_panel_open)}
-  >
-    {mobile_panel_open ? `✕` : `⌁`}
-  </button>
-  {#if mobile_panel_open}
-    <div class="mobile-ssh-overlay">
-      <MobileShell />
-    </div>
-  {/if}
-{/if}
-
 <Toast />
 
 <style>
-  .mobile-ssh-fab {
-    position: fixed;
-    right: 14px;
-    bottom: calc(14px + env(safe-area-inset-bottom));
-    z-index: 9999;
-    width: 52px;
-    height: 52px;
-    font-size: 22px;
-    line-height: 1;
-    color: #fff;
-    background: var(--accent-color, #0a84ff);
-    border: none;
-    border-radius: 50%;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    cursor: pointer;
-  }
-  .mobile-ssh-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 9998;
-    background: var(--page-bg, #0e1117);
-  }
   .sidebar-editor-overlay {
     position: fixed;
     top: 50%;

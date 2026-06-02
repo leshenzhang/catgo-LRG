@@ -24,9 +24,12 @@
   interface Props {
     /** Live HPC session id (from MobileConnect). */
     session_id: string
+    /** Called with the shell's cwd whenever it changes (parsed from OSC 7), so
+     * the Files tab can follow the terminal. */
+    on_cwd?: (path: string) => void
   }
 
-  let { session_id }: Props = $props()
+  let { session_id, on_cwd }: Props = $props()
 
   let container_el: HTMLDivElement | undefined = $state()
   let status = $state<`init` | `connected` | `error`>(`init`)
@@ -53,6 +56,7 @@
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let fit_addon: any = null
     let observer: ResizeObserver | null = null
+    let touch_ac: AbortController | null = null
     let disposed = false
     let opened_channel: string | null = null
 
@@ -153,6 +157,63 @@
         })
         observer.observe(container_el!)
 
+        // Touch scrollback: in the WebView the xterm canvas swallows pointer
+        // events, so dragging never scrolls the viewport. Translate vertical
+        // touch-drag into xterm scroll-by-lines ourselves. Drag DOWN -> scroll
+        // back into history; drag UP -> toward the prompt.
+        touch_ac = new AbortController()
+        let touch_y = 0
+        container_el!.addEventListener(
+          `touchstart`,
+          (e: TouchEvent) => {
+            if (e.touches.length === 1) touch_y = e.touches[0].clientY
+          },
+          { passive: true, signal: touch_ac.signal },
+        )
+        container_el!.addEventListener(
+          `touchmove`,
+          (e: TouchEvent) => {
+            if (e.touches.length !== 1 || disposed) return
+            const y = e.touches[0].clientY
+            const row_h = container_el!.clientHeight / Math.max(term.rows, 1)
+            const lines = Math.trunc((touch_y - y) / Math.max(row_h, 1))
+            if (lines !== 0) {
+              term.scrollLines(lines)
+              touch_y = y
+            }
+          },
+          { passive: true, signal: touch_ac.signal },
+        )
+
+        // cwd tracking via OSC 7: parse `ESC ] 7 ; file://host/path BEL` that the
+        // shell emits each prompt, and bubble the path up so the Files tab can
+        // follow. registerOscHandler returns a disposable tracked by term.dispose.
+        term.parser.registerOscHandler(7, (data: string) => {
+          const m = /^file:\/\/[^/]*(\/.*)$/.exec(data)
+          if (m) {
+            try {
+              on_cwd?.(decodeURIComponent(m[1]))
+            } catch {
+              on_cwd?.(m[1])
+            }
+          }
+          return true
+        })
+        // Ask the shell to emit OSC 7 on every prompt. Leading space keeps it out
+        // of history (HISTCONTROL=ignorespace); bash/zsh honor PROMPT_COMMAND, a
+        // shell without it just never reports (Files then stays at $HOME).
+        const osc7_setup =
+          ` export PROMPT_COMMAND='printf "\\033]7;file://%s%s\\a" "$HOSTNAME" "$PWD"'` +
+          `\${PROMPT_COMMAND:+;$PROMPT_COMMAND}\n`
+        transport.ptyWrite(session_id, ch, encoder.encode(osc7_setup)).catch(() => {})
+
+        // Selection = copy: in a touch UI there's no right-click/Ctrl-C, so push
+        // any non-empty selection straight to the clipboard.
+        term.onSelectionChange(() => {
+          const sel = term.getSelection()
+          if (sel) navigator.clipboard?.writeText(sel).catch(() => {})
+        })
+
         // Focus the hidden textarea so the soft keyboard appears.
         term.focus()
       } catch (e: unknown) {
@@ -168,6 +229,7 @@
     return () => {
       disposed = true
       observer?.disconnect()
+      touch_ac?.abort()
       const ch = opened_channel ?? channel_id
       if (ch) transport.ptyClose(session_id, ch).catch(() => {})
       channel_id = null

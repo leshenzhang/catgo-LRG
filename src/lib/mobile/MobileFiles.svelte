@@ -14,21 +14,33 @@
   NEW + standalone: read-only browse + view; never touches the desktop path.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { transport, type SftpEntry } from '$lib/api/transport'
   import MobileFileViewer from './MobileFileViewer.svelte'
-  import { humanSize, joinPath, parentPath } from './files-util'
+  import { humanSize, joinPath, parentPath, isStructureName } from './files-util'
 
   interface Props {
     /** Live HPC session id (from MobileConnect). */
     session_id: string
+    /** Terminal's current working directory (OSC 7). When it changes, the
+     * browser follows it. Empty => stay where the user navigated. */
+    follow_path?: string
+    /** When set, tapping a structure-format file reads it and calls this so the
+     * host can open it in the 3D editor (instead of the text viewer). */
+    on_open_structure?: (content: string, filename: string, path: string) => void
   }
 
-  let { session_id }: Props = $props()
+  let { session_id, follow_path = ``, on_open_structure }: Props = $props()
 
   let cwd = $state(``)
   let entries = $state<SftpEntry[]>([])
   let status = $state<`init` | `loading` | `ready` | `error`>(`init`)
   let error_msg = $state(``)
+
+  // Address-bar input (type or paste an absolute/relative path to jump there).
+  let path_input = $state(``)
+  // Last terminal cwd we auto-followed, so we only jump when it actually moves.
+  let followed = ``
 
   // Open file (null => showing the listing).
   let open_file = $state<SftpEntry | null>(null)
@@ -71,10 +83,15 @@
     }
   }
 
-  /** Resolve $HOME once, then list it. Falls back to `.` then `/`. */
-  async function init(): Promise<void> {
+  /** Start at the terminal's cwd if known, else resolve $HOME (fallback `.`/`/`). */
+  async function init(initial: string): Promise<void> {
     status = `loading`
     error_msg = ``
+    if (initial.startsWith(`/`)) {
+      followed = initial
+      await list_dir(initial)
+      if (status !== `error`) return
+    }
     let start = `.`
     try {
       const r = await transport.exec(session_id, `echo $HOME`, 10_000)
@@ -89,18 +106,55 @@
   }
 
   $effect(() => {
-    // Re-init whenever the session changes.
+    // Re-init whenever the session changes. Read follow_path NON-reactively so
+    // this only fires on session change, not on every terminal cwd update (that
+    // is the separate follow effect below).
     void session_id
-    init()
+    init(untrack(() => follow_path))
   })
 
-  function enter(entry: SftpEntry): void {
+  // Follow the terminal's cwd: when OSC 7 reports a new directory, jump there —
+  // but never clobber where the user manually navigated to within Files (we only
+  // move when `follow_path` actually changes). untrack keeps the effect's only
+  // dependency `follow_path`, so navigation (which sets `cwd`) can't re-trigger.
+  $effect(() => {
+    const fp = follow_path
+    untrack(() => {
+      if (!fp || !fp.startsWith(`/`) || fp === followed) return
+      followed = fp
+      open_file = null
+      if (fp !== cwd) list_dir(fp)
+    })
+  })
+
+  /** Jump to a typed / pasted path (absolute, or relative to the current dir). */
+  function go_path(): void {
+    const raw = path_input.trim()
+    if (!raw) return
+    const target = raw.startsWith(`/`) ? raw : joinPath(cwd, raw)
+    path_input = ``
+    open_file = null
+    list_dir(target)
+  }
+
+  async function enter(entry: SftpEntry): Promise<void> {
     if (entry.isDir) {
       open_file = null
       list_dir(entry.path || joinPath(cwd, entry.name))
-    } else {
-      open_file = entry
+      return
     }
+    const path = entry.path || joinPath(cwd, entry.name)
+    // A structure file opens straight in the 3D editor (when the host wired it).
+    if (on_open_structure && isStructureName(entry.name)) {
+      try {
+        const r = await transport.sftpRead(session_id, path, 4_000_000)
+        on_open_structure(r.content, entry.name, path)
+      } catch (e) {
+        error_msg = e instanceof Error ? e.message : String(e)
+      }
+      return
+    }
+    open_file = entry
   }
 
   function go_up(): void {
@@ -143,6 +197,25 @@
       ⟳
     </button>
   </header>
+
+  <form
+    class="mf-pathentry"
+    onsubmit={(e) => {
+      e.preventDefault()
+      go_path()
+    }}
+  >
+    <input
+      type="text"
+      inputmode="url"
+      autocapitalize="off"
+      autocorrect="off"
+      spellcheck="false"
+      placeholder="Go to path…  /home/{`{user}`}/project"
+      bind:value={path_input}
+    />
+    <button type="submit" class="mf-go" disabled={!path_input.trim()}>Go</button>
+  </form>
 
   <div class="mf-body">
     {#if status === `loading` && entries.length === 0}
@@ -249,6 +322,44 @@
     cursor: pointer;
   }
   .mf-refresh:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .mf-pathentry {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    padding: 6px 10px;
+    background: rgba(0, 0, 0, 0.18);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .mf-pathentry input {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+    font-size: 16px; /* >=16px stops iOS zoom-on-focus. */
+    color: var(--text-color, #e0e0e0);
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    outline: none;
+  }
+  .mf-pathentry input:focus {
+    border-color: var(--accent-color, #3b82f6);
+  }
+  .mf-go {
+    flex-shrink: 0;
+    min-width: 52px;
+    min-height: 40px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent-color, #0a84ff);
+    border: 1px solid var(--accent-color, #0a84ff);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .mf-go:disabled {
     opacity: 0.5;
     cursor: default;
   }

@@ -54,3 +54,19 @@ export function isBinaryName(name: string): boolean {
   const ext = name.slice(dot + 1).toLowerCase()
   return BINARY_EXTS.has(ext)
 }
+
+// Structure-format files that should open in the 3D editor (by extension OR by
+// well-known VASP basenames that carry no extension).
+const STRUCTURE_EXTS = new Set([
+  `cif`, `poscar`, `contcar`, `vasp`, `xyz`, `extxyz`, `cube`, `cub`,
+  `lammps`, `data`, `pdb`, `mol`, `mol2`, `xsf`, `res`, `gen`,
+])
+const STRUCTURE_BASENAMES = new Set([`poscar`, `contcar`, `xdatcar`])
+
+export function isStructureName(name: string): boolean {
+  const base = name.toLowerCase()
+  if (STRUCTURE_BASENAMES.has(base)) return true
+  const dot = base.lastIndexOf(`.`)
+  if (dot < 0) return false
+  return STRUCTURE_EXTS.has(base.slice(dot + 1))
+}

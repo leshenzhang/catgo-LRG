@@ -158,9 +158,12 @@ class MainActivity : TauriActivity() {
 
     val content = findViewById<View>(android.R.id.content)
     ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
+      val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
       val ime = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-      val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom
-      v.setPadding(0, 0, 0, maxOf(ime, bars))
+      // Pad TOP by the status-bar inset (header/tabs clear the clock & battery)
+      // and BOTTOM by whichever is larger of the IME or nav-bar inset.
+      // env(safe-area-inset-*) is unreliable in the Android WebView.
+      v.setPadding(0, bars.top, 0, maxOf(ime, bars.bottom))
       insets
     }
   }
