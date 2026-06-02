@@ -1,7 +1,13 @@
 /**
  * HPC API client: SSH connections (WebSocket), job scheduling, file transfer, and profile management.
  * Follows the pattern from compute.ts — configurable base URL, error handling, WS support.
+ *
+ * MOBILE (isMobile()): there is no Python backend, so the file-operation helpers
+ * below short-circuit to the russh `transport` (SFTP). Job scheduling / catgo
+ * launch / preflight remain backend-only and are hidden on mobile by the UI.
  */
+
+import { isMobile, transport } from './transport'
 
 // ====== Types ======
 
@@ -470,6 +476,21 @@ export async function listFiles(
   session_id: string,
   path: string = `~`,
 ): Promise<{ success: boolean; files: RemoteFile[]; current_path: string; message?: string }> {
+  if (isMobile()) {
+    try {
+      const entries = await transport.sftpList(session_id, path)
+      const files: RemoteFile[] = entries.map((e) => ({
+        name: e.name,
+        path: e.path,
+        is_dir: e.isDir,
+        size_bytes: e.size,
+        modified_time: ``,
+      }))
+      return { success: true, files, current_path: path }
+    } catch (e) {
+      return { success: false, files: [], current_path: path, message: e instanceof Error ? e.message : String(e) }
+    }
+  }
   const response = await fetch(`${API_BASE}/hpc/files/list`, {
     method: `POST`,
     headers: { 'Content-Type': `application/json` },
@@ -665,14 +686,29 @@ export async function readRemoteFile(
     return cached.value
   }
 
-  const body: Record<string, unknown> = { session_id, file_path }
-  if (max_bytes !== undefined) body.max_bytes = max_bytes
-  const response = await fetch(`${API_BASE}/hpc/files/read-content`, {
-    method: `POST`,
-    headers: { 'Content-Type': `application/json` },
-    body: JSON.stringify(body),
-  })
-  const result = await handleResponse<FileReadResponse>(response)
+  let result: FileReadResponse
+  if (isMobile()) {
+    try {
+      const r = await transport.sftpRead(session_id, file_path, max_bytes)
+      result = {
+        success: true,
+        content: r.content,
+        total_lines: r.content ? r.content.split(`\n`).length : 0,
+        message: r.truncated ? `truncated` : ``,
+      }
+    } catch (e) {
+      result = { success: false, content: ``, total_lines: 0, message: e instanceof Error ? e.message : String(e) }
+    }
+  } else {
+    const body: Record<string, unknown> = { session_id, file_path }
+    if (max_bytes !== undefined) body.max_bytes = max_bytes
+    const response = await fetch(`${API_BASE}/hpc/files/read-content`, {
+      method: `POST`,
+      headers: { 'Content-Type': `application/json` },
+      body: JSON.stringify(body),
+    })
+    result = await handleResponse<FileReadResponse>(response)
+  }
   if (result.success) {
     remote_file_cache.set(cache_key, { time: Date.now(), value: result })
   }
@@ -747,6 +783,20 @@ export async function readRemoteBinaryFile(
   session_id: string,
   file_path: string,
 ): Promise<{ success: boolean; data: string; mime_type: string; size: number; message?: string }> {
+  if (isMobile()) {
+    try {
+      const bytes = await transport.sftpReadBytes(session_id, file_path)
+      let bin = ``
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+      const ext = file_path.split(`.`).pop()?.toLowerCase() ?? ``
+      const mime =
+        ({ jpg: `image/jpeg`, jpeg: `image/jpeg`, png: `image/png`, gif: `image/gif`, pdf: `application/pdf` } as Record<string, string>)[ext] ??
+        `application/octet-stream`
+      return { success: true, data: btoa(bin), mime_type: mime, size: bytes.length }
+    } catch (e) {
+      return { success: false, data: ``, mime_type: ``, size: 0, message: e instanceof Error ? e.message : String(e) }
+    }
+  }
   const response = await fetch(`${API_BASE}/hpc/files/read-binary`, {
     method: `POST`,
     headers: { 'Content-Type': `application/json` },
@@ -760,6 +810,15 @@ export async function writeRemoteFile(
   file_path: string,
   content: string,
 ): Promise<FileWriteResponse> {
+  if (isMobile()) {
+    try {
+      await transport.sftpWrite(session_id, file_path, content)
+      clearRemoteFileCache(session_id, file_path)
+      return { success: true, message: `` }
+    } catch (e) {
+      return { success: false, message: e instanceof Error ? e.message : String(e) }
+    }
+  }
   const response = await fetch(`${API_BASE}/hpc/files/write-content`, {
     method: `POST`,
     headers: { 'Content-Type': `application/json` },
