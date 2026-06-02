@@ -45,6 +45,50 @@
   let blob_url = $state(``)
   let truncated = $state(false)
   let error_msg = $state(``)
+  // Image pinch-zoom + pan (the WebView blocks native pinch via user-scalable=no).
+  let img_scale = $state(1)
+  let img_tx = $state(0)
+  let img_ty = $state(0)
+  let pinch_dist = 0
+  let pinch_scale0 = 1
+  let pan_x = 0
+  let pan_y = 0
+
+  function touch_dist(a: Touch, b: Touch): number {
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+  }
+  function reset_zoom(): void {
+    img_scale = 1
+    img_tx = 0
+    img_ty = 0
+  }
+  function img_touchstart(e: TouchEvent): void {
+    if (e.touches.length === 2) {
+      pinch_dist = touch_dist(e.touches[0], e.touches[1])
+      pinch_scale0 = img_scale
+    } else if (e.touches.length === 1) {
+      pan_x = e.touches[0].clientX
+      pan_y = e.touches[0].clientY
+    }
+  }
+  function img_touchmove(e: TouchEvent): void {
+    if (e.touches.length === 2 && pinch_dist > 0) {
+      const d = touch_dist(e.touches[0], e.touches[1])
+      img_scale = Math.min(8, Math.max(1, (pinch_scale0 * d) / pinch_dist))
+      if (img_scale === 1) {
+        img_tx = 0
+        img_ty = 0
+      }
+    } else if (e.touches.length === 1 && img_scale > 1) {
+      const x = e.touches[0].clientX
+      const y = e.touches[0].clientY
+      img_tx += x - pan_x
+      img_ty += y - pan_y
+      pan_x = x
+      pan_y = y
+    }
+  }
+
   // Text editing: dirty once the user types; Save writes back over SFTP.
   let dirty = $state(false)
   let saving = $state(false)
@@ -116,6 +160,7 @@
           if (cancelled) return
           if (is_image) {
             data_url = `data:${mime_for(ext)};base64,${bytes_to_base64(bytes)}`
+            reset_zoom()
             status = `image`
           } else {
             const blob = new Blob([bytes], { type: `application/pdf` })
@@ -202,7 +247,20 @@
         </div>
       </div>
     {:else if status === `image`}
-      <img class="fv-img" src={data_url} alt={base_name} />
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="fv-img-wrap"
+        ontouchstart={img_touchstart}
+        ontouchmove={img_touchmove}
+        ondblclick={reset_zoom}
+      >
+        <img
+          class="fv-img"
+          src={data_url}
+          alt={base_name}
+          style="transform: translate({img_tx}px, {img_ty}px) scale({img_scale});"
+        />
+      </div>
     {:else if status === `pdf`}
       <iframe class="fv-pdf" src={blob_url} title={base_name}></iframe>
     {:else if status === `markdown`}
@@ -303,11 +361,20 @@
     font-size: 0.85em;
     color: var(--text-color-muted, #94a3b8);
   }
+  .fv-img-wrap {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    touch-action: none; /* we own pinch/pan */
+  }
   .fv-img {
-    margin: auto;
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
+    transform-origin: center center;
+    will-change: transform;
   }
   .fv-pdf {
     flex: 1;
