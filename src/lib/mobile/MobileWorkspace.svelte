@@ -48,7 +48,10 @@
   // terminal are owned by MobileWorkspace (russh); workflow, plugin_hub and chat
   // are Python-backend-only (chat streams via /api/agent/stream) so they can't
   // work without the backend.
-  const HIDDEN_TOOLBAR = [`server`, `terminal`, `workflow`, `plugin_hub`, `chat`]
+  // gesture (MediaPipe hand-tracking via camera) is dropped on mobile: the
+  // front camera + hand model + the 3D editor together exhaust the WebView and
+  // crash the app on this hardware.
+  const HIDDEN_TOOLBAR = [`server`, `terminal`, `workflow`, `plugin_hub`, `chat`, `gesture`]
 
   // SSH-key passwordless onboarding (shown once per endpoint after first connect).
   let ks_visible = $state(false)
