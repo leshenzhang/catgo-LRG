@@ -162,6 +162,11 @@
         if (!ls.ws_conn) sessions.splice(i, 1)
       }
     }
+    // Splicing can leave active_session_idx past the end → active_session
+    // ($derived) becomes null while the Files/Jobs tab is still mounted, and
+    // Svelte re-reads the child prop getters (e.g. session_id) before tearing
+    // the block down. Clamp here so active_session never lingers null.
+    if (active_session_idx >= sessions.length) active_session_idx = sessions.length - 1
   })
 
   let active_tab = $state<ServerTab>(`files`)
@@ -1815,9 +1820,9 @@
           {/if}
           {#key file_tree_key}
             <FileTree
-              session_id={active_session.session_id}
-              root_path={active_session.current_path}
-              root_boundary={active_session.work_root}
+              session_id={active_session?.session_id ?? ``}
+              root_path={active_session?.current_path ?? `~`}
+              root_boundary={active_session?.work_root ?? ``}
               on_load_structure={(file) => load_remote_structure(file)}
               on_open_editor={(file) => open_remote_editor(file)}
               on_preview_file={(file, type) => open_remote_preview(file, type)}
