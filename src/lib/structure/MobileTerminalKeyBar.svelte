@@ -132,8 +132,10 @@
     padding: 6px 8px;
     background: var(--keybar-bg, #1e1e1e);
     border-top: 1px solid var(--keybar-border, #333);
-    /* Keep the bar above an iOS home indicator / nav bar. */
-    padding-bottom: max(6px, env(safe-area-inset-bottom));
+    /* Bottom inset (nav bar / IME) is handled natively by the Android
+       MainActivity window-insets listener; adding env(safe-area-inset-bottom)
+       here too double-pads and leaves a gap above the keyboard. */
+    padding-bottom: 6px;
     scrollbar-width: none;
   }
   .keybar::-webkit-scrollbar {

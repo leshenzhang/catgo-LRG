@@ -36,6 +36,7 @@
   let saved = $state<SavedConnection[]>([])
 
   // ─── Form state ───
+  let label = $state(``)
   let host = $state(``)
   let port = $state(22)
   let username = $state(``)
@@ -96,6 +97,7 @@
     saved = list
     const recent = list[0]
     if (recent && !host) {
+      label = recent.label ?? ``
       host = recent.host
       port = recent.port
       username = recent.username
@@ -107,6 +109,7 @@
   /** Fill the form from a saved connection (tap-to-reconnect), and load its
    * stored password (if any) so the reconnect only needs the OTP. */
   function pick_saved(c: SavedConnection): void {
+    label = c.label ?? ``
     host = c.host
     port = c.port
     username = c.username
@@ -124,6 +127,21 @@
       })
   }
 
+  /** Clear the form to enter a brand-new cluster (the form otherwise prefills
+   * from the most-recent saved connection). */
+  function new_connection(): void {
+    label = ``
+    host = ``
+    port = 22
+    username = ``
+    method = `keyboard-interactive`
+    key_path = ``
+    password = ``
+    passphrase = ``
+    auto_password = ``
+    error_msg = ``
+  }
+
   /** Delete a saved connection (does not touch any stored key material). */
   function delete_saved(id: string, e: Event): void {
     e.stopPropagation()
@@ -132,7 +150,7 @@
 
   function persist_non_secrets(): void {
     saved = upsertConnection(
-      { host, port, username, method, keyPath: key_path },
+      { host, port, username, method, keyPath: key_path, label },
       Date.now(),
     )
   }
@@ -289,7 +307,10 @@
 
     {#if saved.length > 0}
       <div class="saved-list">
-        <span class="saved-label">Saved</span>
+        <div class="saved-head">
+          <span class="saved-label">Saved</span>
+          <button type="button" class="saved-new" onclick={new_connection}>+ New</button>
+        </div>
         {#each saved as c (c.id)}
           <div
             class="saved-row"
@@ -325,6 +346,18 @@
         if (can_submit) connect()
       }}
     >
+      <label class="field name-field">
+        <span>Name (optional)</span>
+        <input
+          type="text"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="Expanse"
+          bind:value={label}
+        />
+      </label>
+
       <label class="field host-field">
         <span>Host</span>
         <input
@@ -520,9 +553,25 @@
     padding-bottom: 16px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
+  .saved-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
   .saved-label {
     font-size: 0.85em;
     color: var(--text-color-muted, #94a3b8);
+  }
+  .saved-new {
+    min-height: 32px;
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent-color, #3b82f6);
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 8px;
+    cursor: pointer;
   }
   .saved-row {
     display: flex;

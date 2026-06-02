@@ -49,9 +49,42 @@
   let ks_user = $state(``)
 
   let file_input: HTMLInputElement | undefined = $state()
+  let root_el: HTMLDivElement | undefined = $state()
+
+  // Track the visual viewport so the terminal sits flush against the keyboard the
+  // moment it opens (the native window-insets padding alone settles a frame late,
+  // so without this the bar shows a gap until the keyboard is toggled once).
+  $effect(() => {
+    const vv = typeof window !== `undefined` ? window.visualViewport : null
+    const el = root_el
+    if (!vv || !el) return
+    const apply = (): void => {
+      el.style.height = `${vv.height}px`
+      el.style.transform = vv.offsetTop ? `translateY(${vv.offsetTop}px)` : ``
+    }
+    apply()
+    vv.addEventListener(`resize`, apply)
+    vv.addEventListener(`scroll`, apply)
+    return () => {
+      vv.removeEventListener(`resize`, apply)
+      vv.removeEventListener(`scroll`, apply)
+      el.style.height = ``
+      el.style.transform = ``
+    }
+  })
 
   let term_cwd = $state(``)
   const has_structure = $derived(structure != null)
+
+  // Auto-dismiss the save/notice banner so it never sticks permanently; a ✕ also
+  // clears it immediately.
+  $effect(() => {
+    if (!save_msg) return
+    const t = setTimeout(() => {
+      save_msg = ``
+    }, 6000)
+    return () => clearTimeout(t)
+  })
   const can_save = $derived(has_structure && (saveable_structure != null || structure != null))
 
   function set_structure(content: string, filename: string, origin: { path: string } | null): void {
@@ -197,7 +230,10 @@
     </header>
 
     {#if save_msg}
-      <div class="mw-msg">{save_msg}</div>
+      <div class="mw-msg">
+        <span>{save_msg}</span>
+        <button type="button" class="mw-msg-x" aria-label="Dismiss" onclick={() => (save_msg = ``)}>✕</button>
+      </div>
     {/if}
 
     <div class="mw-body" class:split-h={mode === `split-h`} class:split-v={mode === `split-v`}>
@@ -356,11 +392,29 @@
     color: #ff6b6b;
   }
   .mw-msg {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     flex-shrink: 0;
-    padding: 6px 12px;
+    padding: 6px 8px 6px 12px;
     font-size: 0.82em;
     color: var(--text-color-muted, #cbd5e1);
     background: rgba(59, 130, 246, 0.1);
+  }
+  .mw-msg span {
+    flex: 1;
+    min-width: 0;
+  }
+  .mw-msg-x {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    font-size: 13px;
+    color: var(--text-color-muted, #94a3b8);
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
   }
 
   /* Body / panes */
