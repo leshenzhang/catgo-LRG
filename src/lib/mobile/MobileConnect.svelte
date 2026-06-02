@@ -26,6 +26,7 @@
     type SavedConnection,
   } from './connections'
   import { endpointKey, reuseSession, rememberSession } from './sessions'
+  import { t } from '$lib/i18n/index.svelte'
 
   interface Props {
     /** Emitted with the live session id once authentication completes. */
@@ -208,7 +209,7 @@
     // Not connected and no OTP round => authentication failed / refused.
     otp_visible = false
     otp_busy = false
-    error_msg = r.message || `Connection failed.`
+    error_msg = r.message || t(`mobile.connection_failed`)
   }
 
   async function connect(): Promise<void> {
@@ -292,7 +293,7 @@
     otp_pending_id = ``
     otp_prompts = []
     otp_instructions = ``
-    error_msg = `Authentication cancelled.`
+    error_msg = t(`mobile.auth_cancelled`)
   }
 
   function finish_connect(): void {
@@ -322,13 +323,13 @@
 
 <div class="connect-wrap">
   <div class="connect-card">
-    <div class="connect-title">Connect to cluster</div>
+    <div class="connect-title">{t(`mobile.connect_title`)}</div>
 
     {#if saved.length > 0}
       <div class="saved-list">
         <div class="saved-head">
-          <span class="saved-label">Saved</span>
-          <button type="button" class="saved-new" onclick={new_connection}>+ New</button>
+          <span class="saved-label">{t(`mobile.saved_label`)}</span>
+          <button type="button" class="saved-new" onclick={new_connection}>{t(`mobile.new_connection`)}</button>
         </div>
         {#each saved as c (c.id)}
           <div
@@ -348,7 +349,7 @@
             <button
               type="button"
               class="saved-del"
-              aria-label="Remove saved connection"
+              aria-label={t(`mobile.remove_saved_connection`)}
               onclick={(e) => delete_saved(c.id, e)}
             >
               ✕
@@ -366,37 +367,37 @@
       }}
     >
       <label class="field name-field">
-        <span>Name (optional)</span>
+        <span>{t(`mobile.field_name`)}</span>
         <input
           type="text"
           autocapitalize="off"
           autocorrect="off"
           spellcheck="false"
-          placeholder="Expanse"
+          placeholder={t(`mobile.field_name_placeholder`)}
           bind:value={label}
         />
       </label>
 
       <label class="field host-field">
-        <span>Host</span>
+        <span>{t(`mobile.field_host`)}</span>
         <input
           type="text"
           inputmode="url"
           autocapitalize="off"
           autocorrect="off"
           spellcheck="false"
-          placeholder="login.cluster.edu"
+          placeholder={t(`mobile.field_host_placeholder`)}
           bind:value={host}
         />
       </label>
 
       <label class="field port-field">
-        <span>Port</span>
+        <span>{t(`mobile.field_port`)}</span>
         <input type="number" min="1" max="65535" bind:value={port} />
       </label>
 
       <label class="field user-field">
-        <span>Username</span>
+        <span>{t(`mobile.field_username`)}</span>
         <input
           type="text"
           autocapitalize="off"
@@ -407,17 +408,17 @@
       </label>
 
       <label class="field method-field">
-        <span>Auth method</span>
+        <span>{t(`mobile.field_auth_method`)}</span>
         <select bind:value={method}>
-          <option value="password">Password</option>
-          <option value="publickey">Public key</option>
-          <option value="keyboard-interactive">Keyboard-interactive</option>
+          <option value="password">{t(`mobile.method_password`)}</option>
+          <option value="publickey">{t(`mobile.method_publickey`)}</option>
+          <option value="keyboard-interactive">{t(`mobile.method_keyboard`)}</option>
         </select>
       </label>
 
       {#if method === `password`}
         <label class="field">
-          <span>Password</span>
+          <span>{t(`mobile.field_password`)}</span>
           <input
             type="password"
             autocomplete="current-password"
@@ -426,7 +427,7 @@
         </label>
       {:else if method === `publickey`}
         <label class="field">
-          <span>Private key path</span>
+          <span>{t(`mobile.field_private_key_path`)}</span>
           <input
             type="text"
             autocapitalize="off"
@@ -437,12 +438,12 @@
           />
         </label>
         <label class="field">
-          <span>Passphrase (optional)</span>
+          <span>{t(`mobile.field_passphrase`)}</span>
           <input type="password" autocomplete="off" bind:value={passphrase} />
         </label>
       {:else}
         <div class="method-hint">
-          You'll be prompted for any codes after connecting.
+          {t(`mobile.keyboard_hint`)}
         </div>
       {/if}
 
@@ -451,7 +452,7 @@
       {/if}
 
       <button type="submit" class="connect-btn" disabled={!can_submit}>
-        {connecting ? `Connecting…` : `Connect`}
+        {connecting ? t(`mobile.connecting`) : t(`mobile.connect_action`)}
       </button>
     </form>
   </div>
@@ -470,14 +471,13 @@
 {#if save_prompt_visible}
   <div class="sp-overlay" role="dialog" aria-modal="true">
     <div class="sp-card">
-      <div class="sp-title">Save password for this cluster?</div>
+      <div class="sp-title">{t(`mobile.save_pw_title`)}</div>
       <div class="sp-body">
-        Next time you connect to <b>{username}@{host}</b> you'll only need the
-        one-time passcode (OTP). The password is encrypted on this device.
+        {t(`mobile.save_pw_body`, { user: `${username}@${host}` })}
       </div>
       <div class="sp-actions">
-        <button type="button" class="sp-no" onclick={finish_connect}>Not now</button>
-        <button type="button" class="sp-yes" onclick={save_password_yes}>Save password</button>
+        <button type="button" class="sp-no" onclick={finish_connect}>{t(`mobile.save_pw_not_now`)}</button>
+        <button type="button" class="sp-yes" onclick={save_password_yes}>{t(`mobile.save_pw_save`)}</button>
       </div>
     </div>
   </div>

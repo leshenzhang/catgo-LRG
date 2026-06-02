@@ -27,6 +27,10 @@
   import MobileFiles from './MobileFiles.svelte'
   import KeySetup from './KeySetup.svelte'
   import { loadConnections } from './connections'
+  import LocaleSwitch from '$lib/i18n/LocaleSwitch.svelte'
+  import { t, load_i18n_module } from '$lib/i18n/index.svelte'
+
+  load_i18n_module(`mobile`)
 
   type Mode = `choose` | `structure` | `terminal` | `split-h` | `split-v`
 
@@ -101,7 +105,7 @@
   function set_structure(content: string, filename: string, origin: { path: string } | null): void {
     const parsed = parse_any_structure(content, filename)
     if (!parsed) {
-      save_msg = `Could not parse ${filename} as a structure.`
+      save_msg = t(`mobile.could_not_parse`, { filename })
       return
     }
     structure = parsed
@@ -156,7 +160,9 @@
     }
     if (remote_origin && session_id) {
       const r = await writeRemoteFile(session_id, remote_origin.path, text)
-      save_msg = r.success ? `Saved to ${remote_origin.path}` : `Save failed: ${r.message}`
+      save_msg = r.success
+        ? t(`mobile.saved_to`, { path: remote_origin.path })
+        : t(`mobile.save_failed_reason`, { reason: r.message })
     } else {
       const blob = new Blob([text], { type: `text/plain` })
       const url = URL.createObjectURL(blob)
@@ -165,7 +171,7 @@
       a.download = local_filename || `POSCAR`
       a.click()
       URL.revokeObjectURL(url)
-      save_msg = `Downloaded ${a.download}`
+      save_msg = t(`mobile.downloaded`, { filename: a.download })
     }
   }
 
@@ -216,44 +222,48 @@
 <div class="mw-root">
   {#if mode === `choose`}
     <div class="mw-choose">
-      <div class="mw-choose-title">CatGo</div>
-      <div class="mw-choose-sub">What do you want to do?</div>
+      <div class="mw-choose-top">
+        <div class="mw-choose-title">CatGo</div>
+        <LocaleSwitch />
+      </div>
+      <div class="mw-choose-sub">{t(`mobile.choose_prompt`)}</div>
       <button type="button" class="mw-choice" onclick={open_local}>
         <span class="mw-choice-icon">⬚</span>
-        <span class="mw-choice-main">View / edit a structure</span>
-        <span class="mw-choice-desc">Open a local file — no cluster needed</span>
+        <span class="mw-choice-main">{t(`mobile.choice_structure_main`)}</span>
+        <span class="mw-choice-desc">{t(`mobile.choice_structure_desc`)}</span>
       </button>
       <button type="button" class="mw-choice" onclick={() => (db_visible = true)}>
         <span class="mw-choice-icon">🗄</span>
-        <span class="mw-choice-main">Import from a database</span>
-        <span class="mw-choice-desc">Search OPTIMADE / Materials Project / PubChem</span>
+        <span class="mw-choice-main">{t(`mobile.choice_database_main`)}</span>
+        <span class="mw-choice-desc">{t(`mobile.choice_database_desc`)}</span>
       </button>
       <button type="button" class="mw-choice" onclick={() => (mode = `terminal`)}>
         <span class="mw-choice-icon">⌨</span>
-        <span class="mw-choice-main">Connect to cluster</span>
-        <span class="mw-choice-desc">SSH terminal + remote files</span>
+        <span class="mw-choice-main">{t(`mobile.choice_connect_main`)}</span>
+        <span class="mw-choice-desc">{t(`mobile.choice_connect_desc`)}</span>
       </button>
     </div>
   {:else}
     <!-- Top bar: layout switch + actions -->
     <header class="mw-bar">
       <div class="mw-tabs">
-        <button type="button" class:active={mode === `structure`} onclick={() => (mode = `structure`)} title="Structure">⬚</button>
-        <button type="button" class:active={mode === `split-v`} onclick={() => (mode = `split-v`)} title="Split (stacked)">⊟</button>
-        <button type="button" class:active={mode === `split-h`} onclick={() => (mode = `split-h`)} title="Split (side by side)">⊞</button>
-        <button type="button" class:active={mode === `terminal`} onclick={() => (mode = `terminal`)} title="Terminal">▭</button>
+        <button type="button" class:active={mode === `structure`} onclick={() => (mode = `structure`)} title={t(`mobile.tab_structure`)}>⬚</button>
+        <button type="button" class:active={mode === `split-v`} onclick={() => (mode = `split-v`)} title={t(`mobile.tab_split_stacked`)}>⊟</button>
+        <button type="button" class:active={mode === `split-h`} onclick={() => (mode = `split-h`)} title={t(`mobile.tab_split_side`)}>⊞</button>
+        <button type="button" class:active={mode === `terminal`} onclick={() => (mode = `terminal`)} title={t(`mobile.tab_terminal`)}>▭</button>
       </div>
       <div class="mw-actions">
+        <LocaleSwitch />
         {#if session_id}
-          <button type="button" class="mw-act" onclick={() => (files_open = true)} title="Remote files">📁</button>
+          <button type="button" class="mw-act" onclick={() => (files_open = true)} title={t(`mobile.action_remote_files`)}>📁</button>
         {/if}
-        <button type="button" class="mw-act" onclick={open_local} title="Open local file">⬆</button>
-        <button type="button" class="mw-act" onclick={() => (db_visible = true)} title="Import from database">🗄</button>
+        <button type="button" class="mw-act" onclick={open_local} title={t(`mobile.action_open_local`)}>⬆</button>
+        <button type="button" class="mw-act" onclick={() => (db_visible = true)} title={t(`mobile.action_import_database`)}>🗄</button>
         {#if can_save}
-          <button type="button" class="mw-act save" onclick={save} title="Save structure">💾</button>
+          <button type="button" class="mw-act save" onclick={save} title={t(`mobile.action_save_structure`)}>💾</button>
         {/if}
         {#if session_id}
-          <button type="button" class="mw-act disconnect" onclick={disconnect} title="Disconnect">⏏</button>
+          <button type="button" class="mw-act disconnect" onclick={disconnect} title={t(`mobile.action_disconnect`)}>⏏</button>
         {/if}
       </div>
     </header>
@@ -261,7 +271,7 @@
     {#if save_msg}
       <div class="mw-msg">
         <span>{save_msg}</span>
-        <button type="button" class="mw-msg-x" aria-label="Dismiss" onclick={() => (save_msg = ``)}>✕</button>
+        <button type="button" class="mw-msg-x" aria-label={t(`common.dismiss`)} onclick={() => (save_msg = ``)}>✕</button>
       </div>
     {/if}
 
@@ -280,10 +290,10 @@
             />
           {:else}
             <div class="mw-empty">
-              <p>No structure loaded.</p>
-              <button type="button" class="mw-open-btn" onclick={open_local}>Open local file</button>
+              <p>{t(`mobile.no_structure_loaded`)}</p>
+              <button type="button" class="mw-open-btn" onclick={open_local}>{t(`mobile.open_local_file`)}</button>
               {#if session_id}
-                <button type="button" class="mw-open-btn" onclick={() => (files_open = true)}>Open from cluster</button>
+                <button type="button" class="mw-open-btn" onclick={() => (files_open = true)}>{t(`mobile.open_from_cluster`)}</button>
               {/if}
             </div>
           {/if}
@@ -307,7 +317,7 @@
   {#if files_open && session_id}
     <div class="mw-files-overlay">
       <header class="mw-files-head">
-        <span>Remote files</span>
+        <span>{t(`mobile.remote_files_title`)}</span>
         <button type="button" onclick={() => (files_open = false)}>✕</button>
       </header>
       <div class="mw-files-body">
@@ -354,6 +364,12 @@
     justify-content: center;
     gap: 14px;
     padding: 24px;
+  }
+  .mw-choose-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
   }
   .mw-choose-title {
     font-size: 1.8em;

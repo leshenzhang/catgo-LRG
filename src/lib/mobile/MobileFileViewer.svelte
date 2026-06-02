@@ -17,6 +17,7 @@
   import { transport } from '$lib/api/transport'
   import { markdown_to_html } from '$lib/chat/markdown'
   import { humanSize, isBinaryName } from './files-util'
+  import { t } from '$lib/i18n/index.svelte'
 
   interface Props {
     /** Live HPC session id. */
@@ -144,22 +145,22 @@
 
 <div class="fv-overlay" role="dialog" aria-modal="true" aria-label={base_name}>
   <header class="fv-header">
-    <button type="button" class="fv-back" onclick={on_close} aria-label="Back to files">
-      ‹ Back
+    <button type="button" class="fv-back" onclick={on_close} aria-label={t(`mobile.back_to_files`)}>
+      ‹ {t(`mobile.back`)}
     </button>
     <span class="fv-name" title={path}>{base_name}</span>
   </header>
 
   <div class="fv-body" class:centered={status === `image` || status === `pdf`}>
     {#if status === `loading`}
-      <div class="fv-status">Loading…</div>
+      <div class="fv-status">{t(`mobile.loading`)}</div>
     {:else if status === `error`}
       <div class="fv-error">{error_msg}</div>
     {:else if status === `binary`}
       <div class="fv-binary">
-        <div class="fv-binary-title">Binary file</div>
+        <div class="fv-binary-title">{t(`mobile.binary_file`)}</div>
         <div class="fv-binary-note">
-          {humanSize(size)} — not shown (non-text or too large to preview).
+          {t(`mobile.binary_note`, { size: humanSize(size) })}
         </div>
       </div>
     {:else if status === `image`}
@@ -172,7 +173,7 @@
     {:else}
       {#if truncated}
         <div class="fv-trunc">
-          Showing the first {humanSize(MAX_BYTES)} — file is larger and was truncated.
+          {t(`mobile.truncated_note`, { size: humanSize(MAX_BYTES) })}
         </div>
       {/if}
       <pre class="fv-pre">{content}</pre>

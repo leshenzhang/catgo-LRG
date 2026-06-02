@@ -12,6 +12,7 @@
 -->
 <script lang="ts">
   import type { OtpPrompt } from '$lib/api/transport'
+  import { t } from '$lib/i18n/index.svelte'
 
   interface Props {
     /** Prompts to answer this round (one input each). */
@@ -51,9 +52,9 @@
   }
 </script>
 
-<div class="otp-overlay" role="dialog" aria-modal="true" aria-label="One-time password">
+<div class="otp-overlay" role="dialog" aria-modal="true" aria-label={t(`mobile.otp_title`)}>
   <div class="otp-card">
-    <div class="otp-title">Verification required</div>
+    <div class="otp-title">{t(`mobile.otp_title`)}</div>
 
     {#if instructions}
       <div class="otp-instructions">{instructions}</div>
@@ -86,10 +87,10 @@
 
       <div class="otp-actions">
         <button type="button" class="otp-btn cancel" disabled={busy} onclick={() => on_cancel?.()}>
-          Cancel
+          {t(`mobile.otp_cancel`)}
         </button>
         <button type="submit" class="otp-btn submit" disabled={busy}>
-          {busy ? `Submitting…` : `Submit`}
+          {busy ? t(`mobile.otp_submitting`) : t(`mobile.otp_submit`)}
         </button>
       </div>
     </form>
