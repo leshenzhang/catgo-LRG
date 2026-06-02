@@ -24,6 +24,7 @@ import { parse_cube_header, cube_atoms_to_molecule } from '$lib/cube/parse-cube'
 import { chgcar_to_cube } from '$lib/electronic/chgdiff-wasm'
 import Structure from '$lib/structure/Structure.svelte'
 import { apply_theme_to_dom, is_valid_theme_name, type ThemeName } from '$lib/theme/index'
+import { set_locale } from '$lib/i18n/index.svelte'
 import '$lib/theme/themes'
 import { ensure_ferrox_wasm_ready } from '$lib/structure/ferrox-wasm'
 import { ensure_moyo_wasm_ready } from '$lib/symmetry'
@@ -52,6 +53,7 @@ export interface CatGoData {
   type: ViewType
   data: FileData
   theme: ThemeName
+  locale?: `en` | `zh` // webview UI language, resolved from catgo.language by the extension
   defaults?: DefaultSettings
   wasm_binary?: string // base64-encoded ferrox WASM binary from extension
   moyo_wasm_binary?: string // base64-encoded moyo WASM binary from extension
@@ -787,6 +789,17 @@ async function initialize() {
 
   // Apply theme early
   if (theme) apply_theme_to_dom(theme)
+
+  // Apply UI language before components mount, so t() resolves in the chosen
+  // locale instead of the webview's navigator.language (always 'en' here).
+  const locale = catgo_data?.locale
+  if (locale) {
+    try {
+      await set_locale(locale)
+    } catch (err) {
+      console.warn(`[CatGO Webview] Failed to set locale "${locale}":`, err)
+    }
+  }
 
   // Initialize ferrox WASM with binary data if provided by extension
   if (wasm_binary) {

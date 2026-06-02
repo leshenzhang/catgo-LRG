@@ -35,6 +35,11 @@
         "command": "catgo.report_bug",
         "title": "Report Bug",
         "category": "CatGo"
+      },
+      {
+        "command": "catgo.open_with_catgo",
+        "title": "Open with CatGo",
+        "category": "CatGo"
       }
     ],
     "keybindings": [
@@ -48,8 +53,9 @@
     "menus": {
       "explorer/context": [
         {
-          "command": "catgo.render_structure",
-          "when": "catgo.supported_resource"
+          "command": "catgo.open_with_catgo",
+          "group": "navigation@99",
+          "when": "!explorerResourceIsFolder && (resourceFilename =~ /\\.(cif|mcif|mmcif|poscar|vasp|lmp|lammps|lammpstrj|data|dump|pdb|mol|mol2|sdf|inp|restart|traj|xtc|trr|dcd|xyz|extxyz|cube|cub|h5|hdf5)(\\.(gz|bz2|xz|zst))?$/i || resourceFilename =~ /(^|[._-])(poscar|contcar|potcar|incar|kpoints|outcar|xdatcar|chgcar|chgdiff|aeccar|locpot|elfcar|parchg)([._-]|$)/i || resourceFilename =~ /vasprun.*\\.xml$/i)"
         }
       ]
     },
@@ -91,6 +97,21 @@
           ],
           "default": "auto",
           "description": "Theme for CatGo visualizations. 'auto' follows VSCode's theme."
+        },
+        "catgo.language": {
+          "type": "string",
+          "enum": [
+            "system",
+            "en",
+            "zh"
+          ],
+          "enumDescriptions": [
+            "Follow VS Code's display language",
+            "English",
+            "中文 (Chinese)"
+          ],
+          "default": "system",
+          "description": "Language for the CatGo viewer UI. 'system' follows VS Code's display language."
         },
         "catgo.auto_render": {
           "type": "boolean",

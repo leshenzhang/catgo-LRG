@@ -62,6 +62,7 @@ interface WebviewData {
   type: `trajectory` | `structure`
   data: FileData
   theme: ThemeName
+  locale?: `en` | `zh` // webview UI language (resolved from catgo.language)
   defaults?: DefaultSettings
   wasm_binary?: string // base64-encoded ferrox WASM binary
   moyo_wasm_binary?: string // base64-encoded moyo WASM binary
@@ -224,6 +225,15 @@ export const get_file = async (uri?: vscode.Uri): Promise<FileData> => {
   )
 }
 
+// Resolve the webview UI language from the `catgo.language` setting.
+// 'system' (default) follows VS Code's display language (vscode.env.language,
+// e.g. "zh-cn"); otherwise the explicit 'en'/'zh' choice wins.
+export const get_locale = (): `en` | `zh` => {
+  const pref = vscode.workspace.getConfiguration(`catgo`).get<string>(`language`, `system`)
+  if (pref === `en` || pref === `zh`) return pref
+  return /^zh\b/i.test(vscode.env.language) ? `zh` : `en`
+}
+
 // Detect VSCode theme and user preference
 export const get_theme = (): ThemeName => {
   const config = vscode.workspace.getConfiguration(`catgo`)
@@ -330,6 +340,7 @@ export const create_html = (
   const data_with_wasm: WebviewData & { server_port?: number } = {
     ...data,
     server_port: get_server_port() ?? undefined,
+    locale: data.locale ?? get_locale(),
   }
   try {
     const assets_dir = path.join(context.extensionUri.fsPath, `dist`, `assets`)
@@ -957,6 +968,13 @@ export const activate = (context: vscode.ExtensionContext) => {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       `catgo.render_structure`,
+      (uri?: vscode.Uri) => render(context, uri),
+    ),
+    // Explorer right-click "Open with CatGo" — render the clicked file directly
+    // from disk (no need to open it in an editor first). Explorer context menu
+    // passes the clicked resource URI as the first arg.
+    vscode.commands.registerCommand(
+      `catgo.open_with_catgo`,
       (uri?: vscode.Uri) => render(context, uri),
     ),
     vscode.commands.registerCommand(

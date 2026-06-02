@@ -19,6 +19,7 @@
   import Select from 'svelte-multiselect'
   import { tooltip } from 'svelte-multiselect/attachments'
   import { t, load_i18n_module } from '$lib/i18n/index.svelte'
+  import LocaleSwitch from '$lib/i18n/LocaleSwitch.svelte'
 
   // Lazy-load structure translations
   load_i18n_module('structure')
@@ -76,6 +77,13 @@
     pane_props?: ComponentProps<typeof DraggablePane>[`pane_props`]
     toggle_props?: ComponentProps<typeof DraggablePane>[`toggle_props`]
   } = $props()
+
+  // Only the VS Code / Antigravity extension webview sets `window.catgoData`
+  // (injected by the extension's create_html). The desktop app and web build
+  // don't, and they already expose a language switch in the top bar. So show
+  // the in-panel language switch only inside the extension viewer.
+  const in_vscode_webview = typeof window !== `undefined` &&
+    !!(window as { catgoData?: unknown }).catgoData
 
   // Color scheme selection state
   let color_scheme_selected = $state([color_scheme])
@@ -210,6 +218,14 @@
   }}
   {...rest}
 >
+  {#if in_vscode_webview}
+    <!-- Language switch (extension webview only — desktop/web use the top bar) -->
+    <div style="display: flex; align-items: center; gap: 8px; padding: 4px 2px 8px;">
+      <span style="opacity: 0.7;">🌐</span>
+      <LocaleSwitch style="flex: 1;" />
+    </div>
+  {/if}
+
   {#if !check_tauri()}
     <!-- Backend connection (web mode only — desktop Tauri uses the bundled sidecar) -->
     <div class="backend-connect-section">
