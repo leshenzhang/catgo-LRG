@@ -24,18 +24,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # TEMP: Windows + macOS already built & uploaded to the v1.1.5 release;
-          # only Linux failed (disk). Build Linux alone to re-attach .deb/.rpm,
-          # then restore the full matrix. tauri-action only uploads what it
-          # builds, so the existing Windows/macOS assets are preserved.
-          # - platform: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          #   backend_target: x86_64-pc-windows-msvc
-          #   name: Windows
-          # - platform: macos-latest
-          #   target: aarch64-apple-darwin
-          #   backend_target: aarch64-apple-darwin
-          #   name: macOS (Apple Silicon)
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            backend_target: x86_64-pc-windows-msvc
+            name: Windows
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            backend_target: aarch64-apple-darwin
+            name: macOS (Apple Silicon)
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             backend_target: x86_64-unknown-linux-gnu
