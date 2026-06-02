@@ -1,6 +1,6 @@
 [package]
 name = "catgo"
-version = "1.1.4"
+version = "1.1.5"
 description = "Interactive visualizations for materials science"
 authors = ["LRG <gul026@ucsd.edu>"]
 license = "AGPL-3.0-or-later"
@@ -55,6 +55,12 @@ russh = "=0.54.5"
 russh-sftp = "2.3.0"
 # gzip/deflate helper for the future compressed file-transfer path.
 flate2 = "1"
+# SSH-key passwordless-login at-rest protection. `getrandom` seeds the on-device
+# ed25519 keygen + the AES-GCM data key; `aes-gcm` wraps the private key at rest
+# (software fallback — the Android Keystore hardening is documented in
+# deploy/android/README.md). Both already resolve in the tree (no new lock churn).
+getrandom = "0.2"
+aes-gcm = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

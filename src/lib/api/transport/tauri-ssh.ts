@@ -12,11 +12,14 @@
  */
 
 import type {
+  GeneratedKeyPair,
   HpcConnectConfig,
   HpcConnectResult,
   HpcExecResult,
   HpcTransport,
   OtpPrompt,
+  SftpEntry,
+  SftpReadResult,
 } from './index'
 
 /** Lazily import the Tauri core so this module is importable in a browser
@@ -44,6 +47,18 @@ interface RustExecResult {
   stdout: string
   stderr: string
   code: number
+}
+
+/** Shape of a Rust `SftpEntry` (serde keeps `is_dir` snake_case). */
+interface RustSftpEntry {
+  name: string
+  path: string
+  is_dir: boolean
+  size: number
+}
+
+function fromRustSftpEntry(e: RustSftpEntry): SftpEntry {
+  return { name: e.name, path: e.path, isDir: e.is_dir, size: e.size }
 }
 
 /** Map the frontend connect config onto the Rust `ConnectConfig` (serde
@@ -149,6 +164,77 @@ class TauriSshTransport implements HpcTransport {
 
   async ptyClose(sessionId: string, channelId: string): Promise<void> {
     await invokeTauri<void>(`ssh_pty_close`, { sessionId, channelId })
+  }
+
+  async sftpList(sessionId: string, path: string): Promise<SftpEntry[]> {
+    const entries = await invokeTauri<RustSftpEntry[]>(`sftp_list`, { sessionId, path })
+    return entries.map(fromRustSftpEntry)
+  }
+
+  async sftpStat(sessionId: string, path: string): Promise<SftpEntry> {
+    const e = await invokeTauri<RustSftpEntry>(`sftp_stat`, { sessionId, path })
+    return fromRustSftpEntry(e)
+  }
+
+  async sftpRead(sessionId: string, path: string, maxBytes?: number): Promise<SftpReadResult> {
+    // Rust `max_bytes: Option<usize>` deserializes from a JSON number or null.
+    return invokeTauri<SftpReadResult>(`sftp_read`, {
+      sessionId,
+      path,
+      maxBytes: maxBytes ?? null,
+    })
+  }
+
+  async sftpReadBytes(sessionId: string, path: string): Promise<Uint8Array> {
+    // Rust returns `Vec<u8>`, serialized over IPC as a JSON number array.
+    const bytes = await invokeTauri<number[]>(`sftp_read_bytes`, { sessionId, path })
+    return Uint8Array.from(bytes)
+  }
+
+  async sftpWrite(sessionId: string, path: string, content: string): Promise<void> {
+    await invokeTauri<void>(`sftp_write`, { sessionId, path, content })
+  }
+
+  async sftpMkdir(sessionId: string, path: string): Promise<void> {
+    await invokeTauri<void>(`sftp_mkdir`, { sessionId, path })
+  }
+
+  async sftpRemove(sessionId: string, path: string): Promise<void> {
+    await invokeTauri<void>(`sftp_remove`, { sessionId, path })
+  }
+
+  async sftpRename(sessionId: string, from: string, to: string): Promise<void> {
+    await invokeTauri<void>(`sftp_rename`, { sessionId, from, to })
+  }
+
+  async keygen(): Promise<GeneratedKeyPair> {
+    // Rust `ssh_keygen` -> { public_openssh, private_openssh } (snake_case).
+    const r = await invokeTauri<{ public_openssh: string; private_openssh: string }>(
+      `ssh_keygen`,
+      {},
+    )
+    return { publicOpenssh: r.public_openssh, privateOpenssh: r.private_openssh }
+  }
+
+  async installPubkey(sessionId: string, publicOpenssh: string): Promise<void> {
+    // Rust `ssh_install_pubkey` returns an ExecResult (never-throw); a non-zero
+    // exit code means the remote install failed — surface it as a rejection so
+    // the UI can show the error.
+    const r = await invokeTauri<RustExecResult>(`ssh_install_pubkey`, {
+      sessionId,
+      publicOpenssh,
+    })
+    if (r.code !== 0) {
+      throw new Error(r.stderr || `Public key install failed (code ${r.code})`)
+    }
+  }
+
+  async keyStore(endpointKey: string, privateOpenssh: string): Promise<void> {
+    await invokeTauri<void>(`ssh_key_store`, { endpointKey, privateOpenssh })
+  }
+
+  async keyLoad(endpointKey: string): Promise<string | null> {
+    return invokeTauri<string | null>(`ssh_key_load`, { endpointKey })
   }
 }
 

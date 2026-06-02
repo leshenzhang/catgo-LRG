@@ -398,10 +398,10 @@
       >
         <div class="tw-pane">
           <TerminalPanel
-            session_id={tab.session_id}
-            host={tab.host}
-            username={tab.username}
-            shell={tab.shell}
+            session_id={tab?.session_id ?? ``}
+            host={tab?.host}
+            username={tab?.username}
+            shell={tab?.shell}
             font_size={terminal_font_state.font_size}
             font_family={terminal_font_state.font_family}
             show_header={false}
@@ -413,10 +413,10 @@
           <div class="tw-divider"></div>
           <div class="tw-pane">
             <TerminalPanel
-              session_id={tab.split_session_id}
-              host={tab.split_host}
-              username={tab.split_username}
-              shell={tab.split_shell}
+              session_id={tab?.split_session_id ?? ``}
+              host={tab?.split_host}
+              username={tab?.split_username}
+              shell={tab?.split_shell}
               font_size={terminal_font_state.font_size}
               font_family={terminal_font_state.font_family}
               show_header={false}

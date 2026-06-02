@@ -206,7 +206,14 @@ class HPCConnection(SSHFileOpsMixin):
             return None
         if self.sftp is None:
             try:
-                self.sftp = await self.conn.start_sftp_client()
+                # Bound the handshake: some login nodes accept the SFTP channel
+                # but never complete the version exchange (file transfer is
+                # offloaded to a separate DTN / a forced-command wrapper stalls).
+                # Without a timeout this awaits forever and the exec fallback
+                # below never triggers. On timeout, treat SFTP as unavailable.
+                self.sftp = await asyncio.wait_for(
+                    self.conn.start_sftp_client(), timeout=10
+                )
             except Exception as e:
                 logger.warning(f"SFTP subsystem unavailable, will use SSH exec fallback: {e}")
                 self._sftp_failed = True

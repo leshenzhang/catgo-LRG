@@ -11,10 +11,13 @@
 
 import { API_BASE } from '../config'
 import type {
+  GeneratedKeyPair,
   HpcConnectConfig,
   HpcConnectResult,
   HpcExecResult,
   HpcTransport,
+  SftpEntry,
+  SftpReadResult,
 } from './index'
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
@@ -110,6 +113,63 @@ class HttpTransport implements HpcTransport {
 
   async ptyClose(_sessionId: string, _channelId: string): Promise<void> {
     // No-op: nothing to tear down on the HTTP path.
+  }
+
+  // SFTP is a mobile (russh) capability only. On desktop the Python backend owns
+  // remote filesystem access (via its own asyncssh/SFTP paths), not this
+  // transport shim, so these throw rather than pretend to reach the cluster.
+  async sftpList(_sessionId: string, _path: string): Promise<SftpEntry[]> {
+    throw new Error(`http transport: SFTP is not supported (mobile russh only)`)
+  }
+
+  async sftpStat(_sessionId: string, _path: string): Promise<SftpEntry> {
+    throw new Error(`http transport: SFTP is not supported (mobile russh only)`)
+  }
+
+  async sftpRead(
+    _sessionId: string,
+    _path: string,
+    _maxBytes?: number,
+  ): Promise<SftpReadResult> {
+    throw new Error(`http transport: SFTP is not supported (mobile russh only)`)
+  }
+
+  async sftpReadBytes(_sessionId: string, _path: string): Promise<Uint8Array> {
+    throw new Error(`http transport: SFTP is not supported (mobile russh only)`)
+  }
+
+  async sftpWrite(_sessionId: string, _path: string, _content: string): Promise<void> {
+    throw new Error(`http transport: SFTP is not supported (mobile russh only)`)
+  }
+
+  async sftpMkdir(_sessionId: string, _path: string): Promise<void> {
+    throw new Error(`http transport: SFTP is not supported (mobile russh only)`)
+  }
+
+  async sftpRemove(_sessionId: string, _path: string): Promise<void> {
+    throw new Error(`http transport: SFTP is not supported (mobile russh only)`)
+  }
+
+  async sftpRename(_sessionId: string, _from: string, _to: string): Promise<void> {
+    throw new Error(`http transport: SFTP is not supported (mobile russh only)`)
+  }
+
+  // SSH-key passwordless login is a mobile (russh + device keystore) capability
+  // only. On desktop the Python backend owns key material, not this shim.
+  async keygen(): Promise<GeneratedKeyPair> {
+    throw new Error(`http transport: SSH keygen is not supported (mobile only)`)
+  }
+
+  async installPubkey(_sessionId: string, _publicOpenssh: string): Promise<void> {
+    throw new Error(`http transport: installPubkey is not supported (mobile only)`)
+  }
+
+  async keyStore(_endpointKey: string, _privateOpenssh: string): Promise<void> {
+    throw new Error(`http transport: key storage is not supported (mobile only)`)
+  }
+
+  async keyLoad(_endpointKey: string): Promise<string | null> {
+    throw new Error(`http transport: key storage is not supported (mobile only)`)
   }
 }
 
