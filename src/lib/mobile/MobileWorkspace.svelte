@@ -29,12 +29,19 @@
   import MobileFiles from './MobileFiles.svelte'
   import KeySetup from './KeySetup.svelte'
   import { loadConnections } from './connections'
+  import { check_tauri } from '$lib/io/tauri'
   import LocaleSwitch from '$lib/i18n/LocaleSwitch.svelte'
   import { t, load_i18n_module } from '$lib/i18n/index.svelte'
 
   load_i18n_module(`mobile`)
 
   type Mode = `choose` | `structure` | `terminal` | `split-h` | `split-v`
+
+  // Mobile WEB (iPhone/Android browser) vs the native app. The terminal needs
+  // the russh transport, which only exists inside the Tauri app (the browser
+  // can't open raw TCP for SSH). On web we hide the terminal entry + layouts and
+  // tell the user to use the app.
+  const is_web = !check_tauri()
 
   let mode = $state<Mode>(`choose`)
   let session_id = $state<string | null>(null)
@@ -194,7 +201,7 @@
     session_id = null
     ks_visible = false
     files_open = false
-    if (!has_content) mode = `terminal`
+    if (!has_content) mode = is_web ? `choose` : `terminal`
   }
 
   function on_connected(id: string): void {
@@ -250,20 +257,30 @@
         <span class="mw-choice-main">{t(`mobile.choice_database_main`)}</span>
         <span class="mw-choice-desc">{t(`mobile.choice_database_desc`)}</span>
       </button>
-      <button type="button" class="mw-choice" onclick={() => (mode = `terminal`)}>
-        <span class="mw-choice-icon">⌨</span>
-        <span class="mw-choice-main">{t(`mobile.choice_connect_main`)}</span>
-        <span class="mw-choice-desc">{t(`mobile.choice_connect_desc`)}</span>
-      </button>
+      {#if is_web}
+        <div class="mw-choice mw-choice-disabled" aria-disabled="true">
+          <span class="mw-choice-icon">⌨</span>
+          <span class="mw-choice-main">{t(`mobile.choice_connect_main`)}</span>
+          <span class="mw-choice-desc">{t(`mobile.connect_app_only`)}</span>
+        </div>
+      {:else}
+        <button type="button" class="mw-choice" onclick={() => (mode = `terminal`)}>
+          <span class="mw-choice-icon">⌨</span>
+          <span class="mw-choice-main">{t(`mobile.choice_connect_main`)}</span>
+          <span class="mw-choice-desc">{t(`mobile.choice_connect_desc`)}</span>
+        </button>
+      {/if}
     </div>
   {:else}
     <!-- Top bar: layout switch + actions -->
     <header class="mw-bar">
       <div class="mw-tabs">
         <button type="button" class:active={mode === `structure`} onclick={() => (mode = `structure`)} title={t(`mobile.tab_structure`)}>⬚</button>
-        <button type="button" class:active={mode === `split-v`} onclick={() => (mode = `split-v`)} title={t(`mobile.tab_split_stacked`)}>⊟</button>
-        <button type="button" class:active={mode === `split-h`} onclick={() => (mode = `split-h`)} title={t(`mobile.tab_split_side`)}>⊞</button>
-        <button type="button" class:active={mode === `terminal`} onclick={() => (mode = `terminal`)} title={t(`mobile.tab_terminal`)}>▭</button>
+        {#if !is_web}
+          <button type="button" class:active={mode === `split-v`} onclick={() => (mode = `split-v`)} title={t(`mobile.tab_split_stacked`)}>⊟</button>
+          <button type="button" class:active={mode === `split-h`} onclick={() => (mode = `split-h`)} title={t(`mobile.tab_split_side`)}>⊞</button>
+          <button type="button" class:active={mode === `terminal`} onclick={() => (mode = `terminal`)} title={t(`mobile.tab_terminal`)}>▭</button>
+        {/if}
       </div>
       <div class="mw-actions">
         <LocaleSwitch />
@@ -417,6 +434,14 @@
   }
   .mw-choice:active {
     border-color: var(--accent-color, #3b82f6);
+  }
+  /* Mobile web: terminal entry shown but inert — the browser can't do SSH. */
+  .mw-choice-disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+  .mw-choice-disabled:active {
+    border-color: rgba(255, 255, 255, 0.12);
   }
   .mw-choice-icon {
     font-size: 22px;

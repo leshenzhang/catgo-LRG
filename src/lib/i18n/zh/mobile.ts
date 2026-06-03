@@ -15,6 +15,7 @@ const mobile: Record<string, string> = {
   choice_database_desc:   `搜索 OPTIMADE / Materials Project / PubChem`,
   choice_connect_main:    `连接到集群`,
   choice_connect_desc:    `SSH 终端 + 远程文件`,
+  connect_app_only:       `请用 CatGo App 使用终端 — 浏览器无法建立 SSH 连接`,
 
   // ── 顶部操作栏 (MobileWorkspace) ─────────────────────────────────────
   tab_structure:          `结构`,

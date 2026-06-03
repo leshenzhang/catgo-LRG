@@ -15,6 +15,7 @@ const mobile: Record<string, string> = {
   choice_database_desc:   `Search OPTIMADE / Materials Project / PubChem`,
   choice_connect_main:    `Connect to cluster`,
   choice_connect_desc:    `SSH terminal + remote files`,
+  connect_app_only:       `Open the CatGo app to use the terminal — the browser can't open SSH`,
 
   // ── Top bar (MobileWorkspace) ────────────────────────────────────────
   tab_structure:          `Structure`,
