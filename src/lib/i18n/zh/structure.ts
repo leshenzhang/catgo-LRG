@@ -922,6 +922,8 @@ const structure: Record<string, string> = {
   touch_box_select_hint: `框选模式：拖拽框选原子（替代 Ctrl/Cmd 拖拽）`,
   touch_move_atoms_hint: `移动模式：拖拽移动选中原子（替代 Shift+Alt 拖拽）`,
   touch_rotate_atoms_hint: `旋转模式：拖拽旋转选中原子（替代 Shift 拖拽）`,
+  touch_delete_atoms: `删除`,
+  touch_delete_atoms_hint: `删除选中的原子（替代 Delete 键）`,
   add_atoms: `添加单个原子`,
   add_fragments: `添加分子片段`,
   fragments: `片段`,

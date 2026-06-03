@@ -922,6 +922,8 @@ const structure: Record<string, string> = {
   touch_box_select_hint: `Box-select mode: drag to select atoms (replaces Ctrl/Cmd-drag)`,
   touch_move_atoms_hint: `Move mode: drag to move selected atoms (replaces Shift+Alt-drag)`,
   touch_rotate_atoms_hint: `Rotate mode: drag to rotate selected atoms (replaces Shift-drag)`,
+  touch_delete_atoms: `Delete`,
+  touch_delete_atoms_hint: `Delete the selected atoms (replaces the Delete key)`,
   add_atoms: `Add single atoms`,
   add_fragments: `Add molecular fragments`,
   fragments: `Fragments`,

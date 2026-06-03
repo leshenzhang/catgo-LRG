@@ -2984,6 +2984,7 @@
       bind:current_continuous_measurement_sites={meas_state.current_continuous_measurement_sites}
       {reset_camera}
       {delete_measurement}
+      delete_selected_atoms={() => gesture_api.delete_selected()}
     >
       {#if !hide_extra_tools}
         <BuildPane

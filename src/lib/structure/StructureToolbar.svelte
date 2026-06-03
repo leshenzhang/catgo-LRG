@@ -85,6 +85,7 @@
     // ── 回调函数 ──
     reset_camera = () => {},
     delete_measurement = (_id: string) => {},
+    delete_selected_atoms = () => {},
     on_popout_chat = undefined as (() => void) | undefined,
 
     // ── 子组件 snippet (面板组件从 Structure.svelte 传入) ──
@@ -141,6 +142,7 @@
     // 回调
     reset_camera?: () => void
     delete_measurement?: (id: string) => void
+    delete_selected_atoms?: () => void
     on_popout_chat?: () => void
 
     // 子组件 snippet
@@ -281,6 +283,16 @@
             onclick={() => interaction.touch_mode = interaction.touch_mode === `rotate` ? `none` : `rotate`}
           >{t('structure.touch_rotate_atoms')}</button>
           <span class="struct-toolbar-tooltip" role="tooltip">{t('structure.touch_rotate_atoms_hint')}</span>
+        </span>
+        <span class="struct-toolbar-tooltip-wrap">
+          <button
+            type="button"
+            class="touch-mode-toggle touch-delete"
+            disabled={selected_sites.length === 0}
+            aria-label={t('structure.touch_delete_atoms')}
+            onclick={() => delete_selected_atoms()}
+          >{t('structure.touch_delete_atoms')}</button>
+          <span class="struct-toolbar-tooltip" role="tooltip">{t('structure.touch_delete_atoms_hint')}</span>
         </span>
       </div>
     {/if}
@@ -988,6 +1000,14 @@
     color: var(--accent-color, #007acc);
     border-color: var(--accent-color, #007acc);
     background-color: color-mix(in srgb, var(--accent-color, #007acc) 18%, transparent);
+  }
+  .touch-mode-toggle.touch-delete:not(:disabled) {
+    color: var(--error-color, #ef4444);
+    border-color: color-mix(in srgb, var(--error-color, #ef4444) 45%, transparent);
+  }
+  .touch-mode-toggle:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 
   /* === 手势控制切换 === */
