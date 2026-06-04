@@ -115,12 +115,12 @@ export const SETTINGS_CONFIG: SettingsConfig = {
       description: `Color for bonds (hex color code)`,
     },
     incomplete_periodic_edge_mode: {
-      value: false,
+      value: true,
       description:
         `Render cross-cell bonds as a single stub on atom A's side instead of paired stubs (VESTA Mode 1)`,
     },
     incomplete_edge_length_scale: {
-      value: 0.5,
+      value: 0.15,
       description:
         `Length of the visible stub for cross-cell bonds in incomplete-edge mode (fraction of half-bond length)`,
       minimum: 0.05,
