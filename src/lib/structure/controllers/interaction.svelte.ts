@@ -1437,9 +1437,7 @@ export function create_interaction_controller(deps: InteractionDeps) {
         const dy = event.clientY - view_rot_last.y
         view_rot_last = { x: event.clientX, y: event.clientY }
         // 水平拖 → yaw (绕世界 Y)，垂直拖 → pitch (绕屏幕右轴)。
-        // gesture_api.rotate 转的是相机，结构看起来朝反方向 → yaw 取负，让结构
-        // "跟手"转 (拖右=结构右转)，与旧 TrackballControls 手感一致。pitch 已跟手。
-        if (dx) deps.rotate_around_center('y', -dx * VIEW_ROTATE_SENSITIVITY)
+        if (dx) deps.rotate_around_center('y', dx * VIEW_ROTATE_SENSITIVITY)
         if (dy) deps.rotate_around_center('x', dy * VIEW_ROTATE_SENSITIVITY)
       }
       event.preventDefault()
