@@ -1075,32 +1075,6 @@
     })
   }
 
-  // Keep the rotation pivot locked to the structure's geometric center.
-  //
-  // TrackballControls couples pan and rotation: a pan translates BOTH the camera
-  // and `target`, so after panning, `target` no longer sits at the structure
-  // center and subsequent rotation orbits the panned point — the structure
-  // visibly swings in an arc instead of spinning about its own center.
-  //
-  // We re-pin `target` to the structure center (get_rotation_center → lattice-box
-  // center for periodic, atom centroid for molecules) after every camera change.
-  // The camera is left where it is, so a pan becomes a pure camera translation
-  // (the view still shifts) while rotation always pivots about the structure
-  // center. Rotation itself never moves `target`, so this only corrects pan.
-  function pin_target_to_center() {
-    untrack(() => {
-      if (!orbit_controls?.target || !structure) return
-      const c = rotation_target
-      if (!c) return
-      const dx = orbit_controls.target.x - c[0]
-      const dy = orbit_controls.target.y - c[1]
-      const dz = orbit_controls.target.z - c[2]
-      // Skip when already centered (rotation/zoom) to avoid disturbing damping.
-      if (dx * dx + dy * dy + dz * dz < 1e-10) return
-      orbit_controls.target.set(c[0], c[1], c[2])
-    })
-  }
-
   // Set camera.up to Z-axis once camera + controls are both ready.
   // MUST be declared BEFORE the orbit target effect below — Svelte 5 fires effects
   // in declaration order, and orbit_controls.update() calls camera.lookAt() which
@@ -4289,7 +4263,6 @@
     },
     onend: () => {
       camera_is_moving = false
-      pin_target_to_center()
       snapshot_view()
       // Sync reset reference points with current state after every camera operation
       // This prevents Ctrl+click or any other operation from snapping back to an old position
@@ -4309,7 +4282,6 @@
       }
     },
     onchange: () => {
-      pin_target_to_center()
       snapshot_view()
       // Continuously sync reset reference points during camera movement
       // TrackballControls uses _target0, _eye0, and _up0 as reset reference points
