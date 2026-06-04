@@ -59,6 +59,7 @@ const mobile: Record<string, string> = {
   field_private_key_path: `Private key path`,
   field_passphrase:       `Passphrase (optional)`,
   keyboard_hint:          `You'll be prompted for any codes after connecting.`,
+  use_jump_host:          `Use a jump host (ProxyJump)`,
   connecting:             `Connecting…`,
   connect_action:         `Connect`,
   connection_failed:      `Connection failed.`,

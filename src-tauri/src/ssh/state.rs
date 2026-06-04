@@ -16,11 +16,13 @@
 //!     command layer can insert/lookup/remove sessions from async contexts.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
 
+use super::auth::AuthConfig;
 use super::handler::MobileHandler;
 
 /// The concrete russh client handle type used throughout the SSH module.
@@ -59,18 +61,50 @@ pub struct PtyHandle {
 /// this struct (never cloned) and moved back out by `take_pending` so the next
 /// round can drive it with `&mut`.
 pub struct PendingAuth {
-    /// The mid-auth russh handle (MOVED in/out — not shared, not cloned).
+    /// The mid-auth russh handle (MOVED in/out — not shared, not cloned). This is
+    /// the handle of whichever hop is currently being authenticated (jump host
+    /// for a `Jump` stage, target login node for `Target`/`Direct`).
     pub handle: SshHandle,
-    /// Remote host, carried so the live `SshSession` can be built once authed.
+    /// Remote host of `handle`, carried so the live `SshSession` can be built
+    /// once authed (the TARGET host, even for the `Jump` stage — see `stage`).
     pub host: String,
-    /// Authenticated username, carried for the same reason.
+    /// Authenticated username of `handle`.
     pub username: String,
+    /// What to do when `handle` finishes authenticating — see [`PendingStage`].
+    pub stage: PendingStage,
+}
+
+/// Everything needed to authenticate the TARGET login node once the jump host is
+/// reached. Carried through the (possibly multi-round) jump-host OTP handshake.
+pub struct TargetPlan {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth: AuthConfig,
+}
+
+/// What a pending (mid keyboard-interactive) handshake should do on Success.
+pub enum PendingStage {
+    /// No jump host: `handle` is the target itself → register the session.
+    Direct,
+    /// `handle` is the JUMP host being authenticated. On success, open a
+    /// `direct-tcpip` tunnel to the target and start the target auth leg.
+    Jump {
+        target: TargetPlan,
+        /// TOFU pinned-host store path for the TARGET's `MobileHandler`.
+        pin_store: PathBuf,
+        /// Shared russh client config (keepalive etc.) reused for the target.
+        ssh_config: Arc<russh::client::Config>,
+    },
+    /// `handle` is the TARGET (already tunnelled through the jump). On success,
+    /// register the session, moving `jump` into it so the tunnel stays alive.
+    Target { jump: SshHandle },
 }
 
 impl PendingAuth {
-    /// Construct a pending (mid-auth) handshake holder.
-    pub fn new(handle: SshHandle, host: String, username: String) -> Self {
-        Self { handle, host, username }
+    /// Construct a pending (mid-auth) handshake holder with an explicit stage.
+    pub fn new(handle: SshHandle, host: String, username: String, stage: PendingStage) -> Self {
+        Self { handle, host, username, stage }
     }
 }
 
@@ -100,11 +134,31 @@ pub struct SshSession {
     /// contexts. Distinct from `handle`: a PTY's write half is independent of
     /// the auth handle's lock, so opening/using a PTY never blocks `ssh_exec`.
     pub ptys: Mutex<HashMap<String, PtyHandle>>,
+    /// For a tunnelled (ProxyJump) session: the authenticated JUMP-host handle.
+    /// Held only to keep the SSH connection — and thus the `direct-tcpip` tunnel
+    /// carrying `handle` — alive for the lifetime of this session. Never used
+    /// directly; dropping it would tear down the tunnel. `None` for direct
+    /// (no-jump) sessions.
+    pub _jump: Mutex<Option<SshHandle>>,
 }
 
 impl SshSession {
-    /// Construct a new session wrapper around a freshly-authenticated handle.
+    /// Construct a new direct (no-jump) session wrapper.
     pub fn new(handle: SshHandle, host: String, username: String) -> Self {
+        Self::new_inner(handle, host, username, None)
+    }
+
+    /// Construct a tunnelled session that keeps its jump-host handle alive.
+    pub fn new_tunnelled(
+        handle: SshHandle,
+        host: String,
+        username: String,
+        jump: SshHandle,
+    ) -> Self {
+        Self::new_inner(handle, host, username, Some(jump))
+    }
+
+    fn new_inner(handle: SshHandle, host: String, username: String, jump: Option<SshHandle>) -> Self {
         Self {
             handle: Mutex::new(handle),
             host,
@@ -112,6 +166,7 @@ impl SshSession {
             connected_at: chrono::Utc::now().timestamp_millis(),
             alive: std::sync::atomic::AtomicBool::new(true),
             ptys: Mutex::new(HashMap::new()),
+            _jump: Mutex::new(jump),
         }
     }
 

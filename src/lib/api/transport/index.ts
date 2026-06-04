@@ -19,7 +19,7 @@
 export type HpcAuthMethod = 'password' | 'publickey' | 'keyboard-interactive'
 
 /** Parameters for opening an HPC connection. */
-export interface HpcConnectConfig {
+export interface HpcHostConfig {
   host: string
   port?: number
   username: string
@@ -30,6 +30,14 @@ export interface HpcConnectConfig {
   keyPath?: string
   /** Optional passphrase decrypting an encrypted private key. */
   passphrase?: string
+}
+
+export interface HpcConnectConfig extends HpcHostConfig {
+  /** Optional jump host (ProxyJump / bastion) to tunnel through. When set, the
+   * jump host is authenticated first (any method, incl. its own OTP), then a
+   * `direct-tcpip` tunnel carries the target handshake. Omit => direct connect.
+   * Mobile (tauri-ssh) only — the HTTP transport ignores it. */
+  jump?: HpcHostConfig
 }
 
 /** A single keyboard-interactive / OTP prompt surfaced by the server. */

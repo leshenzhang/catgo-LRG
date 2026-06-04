@@ -25,8 +25,8 @@ use serde::Deserialize;
 
 use russh::client::KeyboardInteractiveAuthResponse;
 
-use super::auth::{map_prompts, ConnectResult};
-use super::state::{PendingAuth, SshSession, SshState};
+use super::auth::{map_prompts, proceed_to_target, ConnectResult};
+use super::state::{PendingAuth, PendingStage, SshSession, SshState};
 
 /// One OTP / keyboard-interactive submission round from the frontend: the
 /// answers for the prompts most recently surfaced by the server.
@@ -53,15 +53,16 @@ pub async fn ssh_submit_otp(
 
     // MOVE the mid-auth handle out of the pending map. A missing id means the
     // handshake expired, was already consumed, or never existed.
-    let PendingAuth { mut handle, host, username } = match state.take_pending(&pending_id).await {
-        Some(p) => p,
-        None => {
-            return Ok(ConnectResult {
-                message: "no pending OTP session (expired or already used)".into(),
-                ..Default::default()
-            });
-        }
-    };
+    let PendingAuth { mut handle, host, username, stage } =
+        match state.take_pending(&pending_id).await {
+            Some(p) => p,
+            None => {
+                return Ok(ConnectResult {
+                    message: "no pending OTP session (expired or already used)".into(),
+                    ..Default::default()
+                });
+            }
+        };
 
     // Drive exactly ONE round. The server decides whether more rounds follow.
     match handle
@@ -69,27 +70,51 @@ pub async fn ssh_submit_otp(
         .await
     {
         Ok(KeyboardInteractiveAuthResponse::Success) => {
-            let session = Arc::new(SshSession::new(handle, host.clone(), username.clone()));
-            let session_id = state.insert(session).await;
-            log::info!(
-                "[CatGo SSH] keyboard-interactive auth complete — session {session_id} \
-                 ({username}@{host})"
-            );
-            Ok(ConnectResult {
-                connected: true,
-                session_id,
-                ..Default::default()
-            })
+            // The hop authenticated. What happens next depends on the stage:
+            match stage {
+                // Direct connect, or the TARGET leg of a jump — register the
+                // session (carrying the jump handle alive for the Target stage).
+                PendingStage::Direct => {
+                    let session = Arc::new(SshSession::new(handle, host.clone(), username.clone()));
+                    let session_id = state.insert(session).await;
+                    log::info!(
+                        "[CatGo SSH] keyboard-interactive auth complete — session {session_id} \
+                         ({username}@{host})"
+                    );
+                    Ok(ConnectResult { connected: true, session_id, ..Default::default() })
+                }
+                PendingStage::Target { jump } => {
+                    let session = Arc::new(SshSession::new_tunnelled(
+                        handle,
+                        host.clone(),
+                        username.clone(),
+                        jump,
+                    ));
+                    let session_id = state.insert(session).await;
+                    log::info!(
+                        "[CatGo SSH] tunnelled keyboard-interactive auth complete — session \
+                         {session_id} ({username}@{host} via jump)"
+                    );
+                    Ok(ConnectResult { connected: true, session_id, ..Default::default() })
+                }
+                // The JUMP host just finished authenticating — `handle` is now the
+                // authed jump handle. Open the tunnel and start the target leg
+                // (which may itself return another `needs_otp`).
+                PendingStage::Jump { target, pin_store, ssh_config } => {
+                    log::info!("[CatGo SSH] jump host {host} authenticated — opening tunnel");
+                    Ok(proceed_to_target(handle, target, pin_store, ssh_config, state.inner()).await)
+                }
+            }
         }
-        // Another round (multi-round 2FA): re-park the SAME handle under a NEW
-        // pending_id and ask the frontend for the next set of answers.
+        // Another round (multi-round 2FA): re-park the SAME handle + stage under a
+        // NEW pending_id and ask the frontend for the next set of answers.
         Ok(KeyboardInteractiveAuthResponse::InfoRequest {
             instructions,
             prompts,
             ..
         }) => {
             let wire_prompts = map_prompts(&prompts);
-            let pending = PendingAuth::new(handle, host, username);
+            let pending = PendingAuth::new(handle, host, username, stage);
             let next_id = state.insert_pending(pending).await;
             log::info!(
                 "[CatGo SSH] keyboard-interactive needs another round — pending {next_id} \

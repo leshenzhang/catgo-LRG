@@ -61,19 +61,38 @@ function fromRustSftpEntry(e: RustSftpEntry): SftpEntry {
   return { name: e.name, path: e.path, isDir: e.is_dir, size: e.size }
 }
 
-/** Map the frontend connect config onto the Rust `ConnectConfig` (serde
- * `#[serde(flatten)]` of the `method`-tagged `AuthConfig`). */
-function toRustConnectConfig(config: HpcConnectConfig): Record<string, unknown> {
+/** Map one host's fields (host/port/user + flattened `method`-tagged auth) onto
+ * the Rust serde shape. Shared by the top-level target and the nested jump host. */
+function toRustHost(h: {
+  host: string
+  port?: number
+  username: string
+  method: HpcConnectConfig[`method`]
+  password?: string
+  keyPath?: string
+  passphrase?: string
+}): Record<string, unknown> {
   return {
-    host: config.host,
-    port: config.port ?? 22,
-    username: config.username,
+    host: h.host,
+    port: h.port ?? 22,
+    username: h.username,
     // Rust AuthConfig is an internally-tagged enum on `method` with lowercase
     // variant names: "password" | "publickey" | "keyboard-interactive".
-    method: config.method,
-    password: config.password,
-    key_path: config.keyPath,
-    passphrase: config.passphrase,
+    method: h.method,
+    password: h.password,
+    key_path: h.keyPath,
+    passphrase: h.passphrase,
+  }
+}
+
+/** Map the frontend connect config onto the Rust `ConnectConfig` (serde
+ * `#[serde(flatten)]` of the `method`-tagged `AuthConfig`, plus optional
+ * `jump` for ProxyJump). */
+function toRustConnectConfig(config: HpcConnectConfig): Record<string, unknown> {
+  return {
+    ...toRustHost(config),
+    // `jump` => Rust `Option<JumpConfig>`; omitted/undefined => direct connect.
+    jump: config.jump ? toRustHost(config.jump) : undefined,
   }
 }
 

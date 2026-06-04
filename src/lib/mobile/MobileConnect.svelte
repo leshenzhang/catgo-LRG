@@ -48,6 +48,18 @@
   let key_path = $state(``)
   let passphrase = $state(``)
 
+  // Optional jump host (ProxyJump / bastion). When `jump_enabled`, the jump host
+  // is authenticated first, then a tunnel carries the target handshake. The jump
+  // host has its own independent auth method (incl. its own OTP).
+  let jump_enabled = $state(false)
+  let jump_host = $state(``)
+  let jump_port = $state(22)
+  let jump_username = $state(``)
+  let jump_method = $state<HpcAuthMethod>(`password`)
+  let jump_password = $state(``)
+  let jump_key_path = $state(``)
+  let jump_passphrase = $state(``)
+
   // ─── Flow state ───
   let connecting = $state(false)
   let error_msg = $state(``)
@@ -255,6 +267,17 @@
         password: method === `password` ? password : undefined,
         keyPath: method === `publickey` ? key_path.trim() || undefined : undefined,
         passphrase: method === `publickey` ? passphrase || undefined : undefined,
+        jump: jump_enabled && jump_host.trim()
+          ? {
+              host: jump_host.trim(),
+              port: jump_port,
+              username: jump_username.trim(),
+              method: jump_method,
+              password: jump_method === `password` ? jump_password : undefined,
+              keyPath: jump_method === `publickey` ? jump_key_path.trim() || undefined : undefined,
+              passphrase: jump_method === `publickey` ? jump_passphrase || undefined : undefined,
+            }
+          : undefined,
       })
       apply_result(r)
     } catch (e: unknown) {
@@ -444,6 +467,74 @@
       {:else}
         <div class="method-hint">
           {t(`mobile.keyboard_hint`)}
+        </div>
+      {/if}
+
+      <!-- Optional jump host (ProxyJump / bastion) -->
+      <label class="field jump-toggle">
+        <input type="checkbox" bind:checked={jump_enabled} />
+        <span>{t(`mobile.use_jump_host`)}</span>
+      </label>
+
+      {#if jump_enabled}
+        <div class="jump-section">
+          <label class="field">
+            <span>{t(`mobile.field_host`)}</span>
+            <input
+              type="text"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              placeholder="bastion.example.edu"
+              bind:value={jump_host}
+            />
+          </label>
+          <label class="field">
+            <span>{t(`mobile.field_port`)}</span>
+            <input type="number" min="1" max="65535" bind:value={jump_port} />
+          </label>
+          <label class="field">
+            <span>{t(`mobile.field_username`)}</span>
+            <input
+              type="text"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              bind:value={jump_username}
+            />
+          </label>
+          <label class="field">
+            <span>{t(`mobile.field_auth_method`)}</span>
+            <select bind:value={jump_method}>
+              <option value="password">{t(`mobile.method_password`)}</option>
+              <option value="publickey">{t(`mobile.method_publickey`)}</option>
+              <option value="keyboard-interactive">{t(`mobile.method_keyboard`)}</option>
+            </select>
+          </label>
+          {#if jump_method === `password`}
+            <label class="field">
+              <span>{t(`mobile.field_password`)}</span>
+              <input type="password" autocomplete="off" bind:value={jump_password} />
+            </label>
+          {:else if jump_method === `publickey`}
+            <label class="field">
+              <span>{t(`mobile.field_private_key_path`)}</span>
+              <input
+                type="text"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+                placeholder="~/.ssh/id_ed25519"
+                bind:value={jump_key_path}
+              />
+            </label>
+            <label class="field">
+              <span>{t(`mobile.field_passphrase`)}</span>
+              <input type="password" autocomplete="off" bind:value={jump_passphrase} />
+            </label>
+          {:else}
+            <div class="method-hint">{t(`mobile.keyboard_hint`)}</div>
+          {/if}
         </div>
       {/if}
 

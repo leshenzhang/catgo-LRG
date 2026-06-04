@@ -11,6 +11,7 @@
 //! and return `needs_otp = true` + `pending_id` + `prompts`; the response
 //! rounds are driven by [`super::otp::ssh_submit_otp`].
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -21,7 +22,7 @@ use russh::client::{self, AuthResult, KeyboardInteractiveAuthResponse, Prompt};
 use russh::keys::{load_secret_key, HashAlg, PrivateKeyWithHashAlg};
 
 use super::handler::MobileHandler;
-use super::state::{PendingAuth, SshSession, SshState};
+use super::state::{PendingAuth, PendingStage, SshHandle, SshSession, SshState, TargetPlan};
 
 /// One keyboard-interactive / OTP prompt surfaced to the frontend.
 ///
@@ -65,6 +66,20 @@ pub enum AuthConfig {
     KeyboardInteractive,
 }
 
+/// Optional jump host (ProxyJump / bastion) to tunnel through before reaching
+/// the target. Authenticated first; then a `direct-tcpip` channel to the target
+/// carries the target's SSH handshake. The jump may itself need any auth method
+/// (password / public-key / keyboard-interactive OTP), independent of the target.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JumpConfig {
+    pub host: String,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    pub username: String,
+    #[serde(flatten)]
+    pub auth: AuthConfig,
+}
+
 /// Connection request from the frontend.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectConfig {
@@ -74,6 +89,9 @@ pub struct ConnectConfig {
     pub username: String,
     #[serde(flatten)]
     pub auth: AuthConfig,
+    /// Optional jump host to tunnel through. `None` => direct connect (unchanged).
+    #[serde(default)]
+    pub jump: Option<JumpConfig>,
 }
 
 fn default_port() -> u16 {
@@ -107,6 +125,148 @@ pub struct ConnectResult {
     pub instructions: String,
 }
 
+/// Outcome of one authentication attempt on a russh handle.
+enum AuthOutcome {
+    /// Authenticated — the now-authed handle is returned for use.
+    Authed(SshHandle),
+    /// The server wants a keyboard-interactive / OTP round. The mid-auth handle
+    /// plus the prompts to surface; the caller parks the handle and returns
+    /// `needs_otp` so the frontend drives `ssh_submit_otp`.
+    NeedsOtp { handle: SshHandle, prompts: Vec<OtpPrompt>, instructions: String },
+    /// Authentication failed or errored — human-readable message.
+    Failed(String),
+}
+
+/// Run ONE authentication attempt for `auth` against `handle`. Shared by the
+/// jump-host leg, the target leg, and the direct (no-jump) path. Keyboard-
+/// interactive only STARTS here (one round); the OTP loop is driven by
+/// `super::otp::ssh_submit_otp`.
+async fn authenticate(mut handle: SshHandle, username: &str, auth: &AuthConfig) -> AuthOutcome {
+    match auth {
+        AuthConfig::Password { password } => {
+            match handle.authenticate_password(username, password.clone()).await {
+                Ok(AuthResult::Success) => AuthOutcome::Authed(handle),
+                Ok(AuthResult::Failure { .. }) => {
+                    AuthOutcome::Failed("Password authentication rejected".into())
+                }
+                Err(e) => AuthOutcome::Failed(format!("Password auth error: {e}")),
+            }
+        }
+        AuthConfig::Publickey { key_path, passphrase } => {
+            let pass_ref = passphrase.as_deref().filter(|s| !s.is_empty());
+            let key = match load_secret_key(key_path, pass_ref) {
+                Ok(k) => k,
+                Err(e) => {
+                    return AuthOutcome::Failed(format!("Could not load private key {key_path}: {e}"))
+                }
+            };
+            let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), Some(HashAlg::Sha512));
+            match handle.authenticate_publickey(username, key_with_alg).await {
+                Ok(AuthResult::Success) => AuthOutcome::Authed(handle),
+                Ok(AuthResult::Failure { .. }) => {
+                    AuthOutcome::Failed("Public-key authentication rejected".into())
+                }
+                Err(e) => AuthOutcome::Failed(format!("Public-key auth error: {e}")),
+            }
+        }
+        AuthConfig::KeyboardInteractive => {
+            match handle
+                .authenticate_keyboard_interactive_start(username, None)
+                .await
+            {
+                Ok(KeyboardInteractiveAuthResponse::Success) => AuthOutcome::Authed(handle),
+                Ok(KeyboardInteractiveAuthResponse::InfoRequest { instructions, prompts, .. }) => {
+                    AuthOutcome::NeedsOtp { handle, prompts: map_prompts(&prompts), instructions }
+                }
+                Ok(KeyboardInteractiveAuthResponse::Failure { .. }) => {
+                    AuthOutcome::Failed("Keyboard-interactive auth rejected".into())
+                }
+                Err(e) => AuthOutcome::Failed(format!("Keyboard-interactive auth error: {e}")),
+            }
+        }
+    }
+}
+
+/// After the jump host is authenticated, open a `direct-tcpip` tunnel to the
+/// target and run the target's SSH handshake + auth over it. Registers a
+/// tunnelled session (keeping `jump_handle` alive) or parks a `Target`-stage
+/// pending handshake when the target needs OTP. Shared by the synchronous jump
+/// path (`ssh_connect`) and the jump-OTP path (`ssh_submit_otp`).
+pub(super) async fn proceed_to_target(
+    jump_handle: SshHandle,
+    target: TargetPlan,
+    pin_store: PathBuf,
+    ssh_config: Arc<client::Config>,
+    state: &SshState,
+) -> ConnectResult {
+    let channel = match jump_handle
+        .channel_open_direct_tcpip(target.host.clone(), target.port as u32, "127.0.0.1", 0)
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return ConnectResult {
+                message: format!(
+                    "Jump: could not open tunnel to {}:{}: {e}",
+                    target.host, target.port
+                ),
+                ..Default::default()
+            }
+        }
+    };
+
+    let key_mismatch = Arc::new(AtomicBool::new(false));
+    let handler =
+        MobileHandler::new(target.host.clone(), target.port, pin_store, key_mismatch.clone());
+    let target_handle =
+        match client::connect_stream(ssh_config, channel.into_stream(), handler).await {
+            Ok(h) => h,
+            Err(e) => {
+                let message = if key_mismatch.load(Ordering::SeqCst) {
+                    format!(
+                        "Target host key for {}:{} CHANGED — refusing to connect \
+                         (possible man-in-the-middle).",
+                        target.host, target.port
+                    )
+                } else {
+                    format!(
+                        "SSH connect to target {}:{} over jump host failed: {e}",
+                        target.host, target.port
+                    )
+                };
+                return ConnectResult { message, ..Default::default() };
+            }
+        };
+
+    match authenticate(target_handle, &target.username, &target.auth).await {
+        AuthOutcome::Authed(h) => {
+            let session = Arc::new(SshSession::new_tunnelled(
+                h,
+                target.host.clone(),
+                target.username.clone(),
+                jump_handle,
+            ));
+            let session_id = state.insert(session).await;
+            log::info!(
+                "[CatGo SSH] connected tunnelled session {session_id} ({}@{} via jump)",
+                target.username, target.host
+            );
+            ConnectResult { connected: true, session_id, ..Default::default() }
+        }
+        AuthOutcome::NeedsOtp { handle, prompts, instructions } => {
+            let pending = PendingAuth::new(
+                handle,
+                target.host.clone(),
+                target.username.clone(),
+                PendingStage::Target { jump: jump_handle },
+            );
+            let pending_id = state.insert_pending(pending).await;
+            ConnectResult { needs_otp: true, pending_id, prompts, instructions, ..Default::default() }
+        }
+        AuthOutcome::Failed(message) => ConnectResult { message, ..Default::default() },
+    }
+}
+
 /// Open + authenticate an SSH session.
 ///
 /// NEVER throws across the Tauri boundary on a *connection* failure: returns a
@@ -124,17 +284,16 @@ pub async fn ssh_connect(
         port,
         username,
         auth,
+        jump,
     } = config;
 
-    // 1. Open TCP + SSH transport and run the persistent-TOFU server-key check.
-    //    The pinned-key store lives under the app data dir; a key MISMATCH there
-    //    refuses the connection (possible MITM).
+    // The pinned-key TOFU store (shared file, keyed per host) lives under the app
+    // data dir; a key MISMATCH there refuses the connection (possible MITM).
     let pin_store = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("could not resolve app data dir: {e}"))?
         .join("ssh_known_hosts.json");
-    let key_mismatch = Arc::new(AtomicBool::new(false));
 
     // Keepalive so an idle session stays alive for ControlMaster-style reuse
     // (the frontend re-picks a still-live connection instead of re-authenticating).
@@ -143,10 +302,57 @@ pub async fn ssh_connect(
         keepalive_max: 3,
         ..Default::default()
     });
-    let handler = MobileHandler::new(host.clone(), port, pin_store, key_mismatch.clone());
-    let addr = (host.as_str(), port);
 
-    let mut handle = match client::connect(ssh_config, addr, handler).await {
+    // ── ProxyJump path: authenticate the jump host first, then tunnel. ──
+    if let Some(jump) = jump {
+        let key_mismatch = Arc::new(AtomicBool::new(false));
+        let handler = MobileHandler::new(
+            jump.host.clone(),
+            jump.port,
+            pin_store.clone(),
+            key_mismatch.clone(),
+        );
+        let jump_handle =
+            match client::connect(ssh_config.clone(), (jump.host.as_str(), jump.port), handler).await
+            {
+                Ok(h) => h,
+                Err(e) => {
+                    let message = if key_mismatch.load(Ordering::SeqCst) {
+                        format!(
+                            "Jump host key for {}:{} CHANGED — refusing to connect \
+                             (possible man-in-the-middle).",
+                            jump.host, jump.port
+                        )
+                    } else {
+                        format!("SSH connect to jump host {}:{} failed: {e}", jump.host, jump.port)
+                    };
+                    return Ok(ConnectResult { message, ..Default::default() });
+                }
+            };
+
+        let target = TargetPlan { host, port, username, auth };
+        return Ok(match authenticate(jump_handle, &jump.username, &jump.auth).await {
+            AuthOutcome::Authed(jh) => {
+                proceed_to_target(jh, target, pin_store, ssh_config, state.inner()).await
+            }
+            AuthOutcome::NeedsOtp { handle, prompts, instructions } => {
+                let pending = PendingAuth::new(
+                    handle,
+                    jump.host.clone(),
+                    jump.username.clone(),
+                    PendingStage::Jump { target, pin_store, ssh_config },
+                );
+                let pending_id = state.insert_pending(pending).await;
+                ConnectResult { needs_otp: true, pending_id, prompts, instructions, ..Default::default() }
+            }
+            AuthOutcome::Failed(message) => ConnectResult { message, ..Default::default() },
+        });
+    }
+
+    // ── Direct path (no jump host) — original behavior via the shared helper. ──
+    let key_mismatch = Arc::new(AtomicBool::new(false));
+    let handler = MobileHandler::new(host.clone(), port, pin_store, key_mismatch.clone());
+    let handle = match client::connect(ssh_config, (host.as_str(), port), handler).await {
         Ok(h) => h,
         Err(e) => {
             let message = if key_mismatch.load(Ordering::SeqCst) {
@@ -162,121 +368,24 @@ pub async fn ssh_connect(
         }
     };
 
-    // 2. Authenticate per the requested method.
-    match auth {
-        AuthConfig::Password { password } => {
-            match handle.authenticate_password(&username, password).await {
-                Ok(AuthResult::Success) => {}
-                Ok(AuthResult::Failure { .. }) => {
-                    return Ok(ConnectResult {
-                        message: "Password authentication rejected".into(),
-                        ..Default::default()
-                    });
-                }
-                Err(e) => {
-                    return Ok(ConnectResult {
-                        message: format!("Password auth error: {e}"),
-                        ..Default::default()
-                    });
-                }
-            }
+    Ok(match authenticate(handle, &username, &auth).await {
+        AuthOutcome::Authed(h) => {
+            let session = Arc::new(SshSession::new(h, host.clone(), username.clone()));
+            let session_id = state.insert(session).await;
+            log::info!("[CatGo SSH] connected session {session_id} ({username}@{host}:{port})");
+            ConnectResult { connected: true, session_id, ..Default::default() }
         }
-        AuthConfig::Publickey {
-            key_path,
-            passphrase,
-        } => {
-            // load_secret_key wants Option<&str> for the passphrase.
-            let pass_ref = passphrase.as_deref().filter(|s| !s.is_empty());
-            let key = match load_secret_key(&key_path, pass_ref) {
-                Ok(k) => k,
-                Err(e) => {
-                    return Ok(ConnectResult {
-                        message: format!("Could not load private key {key_path}: {e}"),
-                        ..Default::default()
-                    });
-                }
-            };
-            // hash_alg only matters for RSA (Sha512 here); ignored & forced to
-            // None for ed25519/ecdsa by PrivateKeyWithHashAlg::new.
-            let key_with_alg = PrivateKeyWithHashAlg::new(Arc::new(key), Some(HashAlg::Sha512));
-            match handle.authenticate_publickey(&username, key_with_alg).await {
-                Ok(AuthResult::Success) => {}
-                Ok(AuthResult::Failure { .. }) => {
-                    return Ok(ConnectResult {
-                        message: "Public-key authentication rejected".into(),
-                        ..Default::default()
-                    });
-                }
-                Err(e) => {
-                    return Ok(ConnectResult {
-                        message: format!("Public-key auth error: {e}"),
-                        ..Default::default()
-                    });
-                }
-            }
+        AuthOutcome::NeedsOtp { handle, prompts, instructions } => {
+            let pending =
+                PendingAuth::new(handle, host.clone(), username.clone(), PendingStage::Direct);
+            let pending_id = state.insert_pending(pending).await;
+            log::info!(
+                "[CatGo SSH] keyboard-interactive challenge for {username}@{host}:{port} — \
+                 pending {pending_id} ({} prompt(s))",
+                prompts.len()
+            );
+            ConnectResult { needs_otp: true, pending_id, prompts, instructions, ..Default::default() }
         }
-        AuthConfig::KeyboardInteractive => {
-            // Start the keyboard-interactive handshake. The server may answer
-            // immediately (Success, e.g. no actual prompts), reject (Failure),
-            // or — the common 2FA case — return an `InfoRequest` round of
-            // prompts (password, then OTP, ...). Because the start/respond loop
-            // is `&mut self` on the SAME handle and can span MULTIPLE rounds,
-            // each `InfoRequest` is handed back to the frontend and the mid-auth
-            // handle is parked in the `pending` map for `ssh_submit_otp` to
-            // resume. `None` submethods => let the server choose.
-            match handle
-                .authenticate_keyboard_interactive_start(&username, None)
-                .await
-            {
-                // Authed in one shot — fall through to "register live session".
-                Ok(KeyboardInteractiveAuthResponse::Success) => {}
-                Ok(KeyboardInteractiveAuthResponse::InfoRequest {
-                    instructions,
-                    prompts,
-                    ..
-                }) => {
-                    let wire_prompts = map_prompts(&prompts);
-                    let pending = PendingAuth::new(handle, host.clone(), username.clone());
-                    let pending_id = state.insert_pending(pending).await;
-                    log::info!(
-                        "[CatGo SSH] keyboard-interactive challenge for {username}@{host}:{port} \
-                         — pending {pending_id} ({} prompt(s))",
-                        wire_prompts.len()
-                    );
-                    return Ok(ConnectResult {
-                        needs_otp: true,
-                        pending_id,
-                        prompts: wire_prompts,
-                        instructions,
-                        ..Default::default()
-                    });
-                }
-                Ok(KeyboardInteractiveAuthResponse::Failure { .. }) => {
-                    return Ok(ConnectResult {
-                        message: "Keyboard-interactive auth rejected".into(),
-                        ..Default::default()
-                    });
-                }
-                Err(e) => {
-                    return Ok(ConnectResult {
-                        message: format!("Keyboard-interactive auth error: {e}"),
-                        ..Default::default()
-                    });
-                }
-            }
-        }
-    }
-
-    // 3. Authenticated — register the live session.
-    let session = Arc::new(SshSession::new(handle, host.clone(), username.clone()));
-    let session_id = state.insert(session).await;
-    log::info!(
-        "[CatGo SSH] connected session {session_id} ({username}@{host}:{port})"
-    );
-
-    Ok(ConnectResult {
-        connected: true,
-        session_id,
-        ..Default::default()
+        AuthOutcome::Failed(message) => ConnectResult { message, ..Default::default() },
     })
 }

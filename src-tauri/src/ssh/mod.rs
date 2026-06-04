@@ -13,10 +13,14 @@
 //!   * `exec.rs`    — `ssh_exec` (login-shell exec, never-throw, ~30s timeout).
 //!   * `sftp.rs`    — `sftp_*` file-browser ops over a per-call SFTP subsystem.
 //!
+//! ProxyJump (jump host / bastion) is supported: `ssh_connect` takes an optional
+//! `jump` config; the jump host is authenticated first, then a `direct-tcpip`
+//! channel carries the target handshake over `connect_stream` (auth.rs's
+//! `proceed_to_target`). Both hops support password / public-key / keyboard-
+//! interactive OTP independently; the staged handshake is driven by `otp.rs`.
+//!
 //! Known TODOs (see the respective files for detail):
 //!   * TOFU persistent pinning (handler.rs) — currently accept-and-log only.
-//!   * OTP / keyboard-interactive wiring (auth.rs + otp.rs).
-//!   * ProxyJump / direct-tcpip (not yet implemented; spike documents the API).
 
 pub mod auth;
 pub mod exec;

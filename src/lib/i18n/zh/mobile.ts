@@ -59,6 +59,7 @@ const mobile: Record<string, string> = {
   field_private_key_path: `私钥路径`,
   field_passphrase:       `私钥口令（可选）`,
   keyboard_hint:          `连接后系统会提示你输入所需的验证码。`,
+  use_jump_host:          `使用跳板机 (ProxyJump)`,
   connecting:             `连接中…`,
   connect_action:         `连接`,
   connection_failed:      `连接失败。`,
