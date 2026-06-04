@@ -4,7 +4,6 @@
   import { ContextMenu, Icon, Spinner, toggle_fullscreen } from '$lib'
   import { type ColorSchemeName, element_color_schemes } from '$lib/colors'
   import { decompress_file, load_from_url, check_tauri } from '$lib/io'
-  import { isMobile } from '$lib/api/transport'
   import { DosAnalysisPane, DosPlot, CohpAnalysisPane, CohpPlot, BandAnalysisPane, BandPlot, FreqAnalysisPane, ChargeAnalysisPane } from '$lib/electronic'
   import type { DOSSessionInfo, DosViewState, CohpViewState, BandViewState } from '$lib/electronic'
   import { API_BASE } from '$lib/api/config'
@@ -3914,7 +3913,7 @@
             {reset_camera_up_trigger}
             repaint_trigger={webgl_repaint_trigger}
             external_dragging={interaction.is_dragging_atom || interaction.is_rotating_atoms}
-            external_view_rotation={isMobile()}
+            external_view_rotation={true}
             is_box_selecting={interaction.is_box_selecting}
             is_rotating_atoms={interaction.is_rotating_atoms}
             is_dragging_atom={interaction.is_dragging_atom}

@@ -333,12 +333,13 @@ export function create_interaction_controller(deps: InteractionDeps) {
   const AXIS_LOCK_DEADZONE_PX = 4 // left-drag must exceed this before an axis locks
 
   // ═══════════════════════════════════════════════════════════════════
-  // 自定义视图旋转 (单指触屏) — 绕结构中心而非 TrackballControls 的 pan 偏移点
+  // 自定义视图旋转 — 绕结构中心而非 TrackballControls 的 pan 偏移点
   // ═══════════════════════════════════════════════════════════════════
   // TrackballControls 旋转绕 `target`，而 pan 会把 target 移走 → 平移后旋转就不
-  // 绕结构中心了。手机上禁用 TB 旋转 (StructureScene noRotate)，改由这里的单指
-  // 拖拽经 deps.rotate_around_center 绕盒子中心/质心旋转 (保留 pan 偏移)。
-  // 仅触屏单指生效；双指交给 TB 做 pan/zoom；鼠标走桌面 TB 原生旋转。
+  // 绕结构中心了。主编辑器禁用 TB 旋转 (StructureScene external_view_rotation →
+  // noRotate)，改由这里的左键拖拽经 deps.rotate_around_center 绕盒子中心/质心旋转
+  // (保留 pan 偏移)。鼠标左键 + 触屏单指都生效；触屏双指交给 TB 做 pan/zoom；
+  // 中键/滚轮仍是 TB pan/zoom。
   let is_view_rotating = false
   let view_rot_last: { x: number; y: number } | null = null
   const VIEW_ROTATE_SENSITIVITY = 0.006 // rad per pixel
@@ -1175,13 +1176,16 @@ export function create_interaction_controller(deps: InteractionDeps) {
     // a fired long-press already cleared it.
     cancel_long_press()
 
-    // 单指视图旋转：抬指清理。无手指剩余时结束旋转。
+    // 视图旋转：抬指/松鼠标清理。触屏需所有手指离开才结束。
     if (event.pointerType === 'touch') {
       active_touch_pointers.delete(event.pointerId)
       if (active_touch_pointers.size === 0) {
         is_view_rotating = false
         view_rot_last = null
       }
+    } else {
+      is_view_rotating = false
+      view_rot_last = null
     }
 
     // 裁剪区域完成
@@ -1266,21 +1270,20 @@ export function create_interaction_controller(deps: InteractionDeps) {
       return
     }
 
-    // 自定义单指视图旋转 (touch only) — 绕结构中心。其它模式 (框选/移动/转原子/
-    // 裁剪) 已在上面 return，到这里说明是普通拖拽。鼠标不在此处理，仍走 TB。
-    if (event.pointerType === 'touch') {
-      active_touch_pointers.add(event.pointerId)
-      const single = active_touch_pointers.size === 1
-      if (single && touch_mode === 'none' && event.button === 0 &&
-          deps.rotate_around_center && deps.get_structure() && deps.get_camera() &&
-          !axis_lock_key && !crop_mode_active) {
-        is_view_rotating = true
-        view_rot_last = { x: event.clientX, y: event.clientY }
-      } else if (!single) {
-        // 第二指落下 → 这是双指手势 (pan/zoom)，交给 TrackballControls。
-        is_view_rotating = false
-        view_rot_last = null
-      }
+    // 自定义视图旋转 — 绕结构中心。其它模式 (框选/移动/转原子/裁剪) 已在上面
+    // return，到这里说明是普通拖拽。左键单指/单鼠标生效；触屏第二指出现则交还
+    // TrackballControls 做双指 pan/zoom。中键 (button 1) 走 TB pan，不在此处理。
+    const is_touch = event.pointerType === 'touch'
+    if (is_touch) active_touch_pointers.add(event.pointerId)
+    if (is_touch && active_touch_pointers.size >= 2) {
+      // 第二指落下 → 双指手势 (pan/zoom)，交给 TrackballControls。
+      is_view_rotating = false
+      view_rot_last = null
+    } else if (touch_mode === 'none' && event.button === 0 &&
+        deps.rotate_around_center && deps.get_structure() && deps.get_camera() &&
+        !axis_lock_key && !crop_mode_active) {
+      is_view_rotating = true
+      view_rot_last = { x: event.clientX, y: event.clientY }
     }
   }
 
@@ -1658,6 +1661,11 @@ export function create_interaction_controller(deps: InteractionDeps) {
         box_select_end = null
       }
       if (is_rotating) is_rotating = false
+      if (is_view_rotating) {
+        is_view_rotating = false
+        view_rot_last = null
+        active_touch_pointers.clear()
+      }
     }
 
     function on_visibility_change() {

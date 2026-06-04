@@ -498,10 +498,10 @@
     reset_camera_up_trigger = 0, // Increment to reset camera.up to [0,0,1] (Z-up) after slab cut
     repaint_trigger = 0, // Increment to force ONE WebGL repaint (no side effects) — used when the large-system overlay closes and autoRender resumes
     external_dragging = false,
-    // When true, the parent owns view rotation via a custom handler (mobile
-    // one-finger touch → orbit around the structure center), so TrackballControls'
-    // native rotate must be disabled (its pan-shifted target would rotate
-    // off-center). Pan/zoom stay on. Off by default (preview, desktop).
+    // When true, the parent owns view rotation via a custom handler (mouse
+    // left-drag / one-finger touch → orbit around the structure center), so
+    // TrackballControls' native rotate must be disabled (its pan-shifted target
+    // would rotate off-center). Pan/zoom stay on. Off by default (preview).
     external_view_rotation = false,
     is_box_selecting = false,
     is_rotating_atoms = false,
