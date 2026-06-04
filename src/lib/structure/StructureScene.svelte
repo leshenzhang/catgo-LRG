@@ -498,6 +498,11 @@
     reset_camera_up_trigger = 0, // Increment to reset camera.up to [0,0,1] (Z-up) after slab cut
     repaint_trigger = 0, // Increment to force ONE WebGL repaint (no side effects) — used when the large-system overlay closes and autoRender resumes
     external_dragging = false,
+    // When true, the parent owns view rotation via a custom handler (mobile
+    // one-finger touch → orbit around the structure center), so TrackballControls'
+    // native rotate must be disabled (its pan-shifted target would rotate
+    // off-center). Pan/zoom stay on. Off by default (preview, desktop).
+    external_view_rotation = false,
     is_box_selecting = false,
     is_rotating_atoms = false,
     is_dragging_atom = false,
@@ -751,6 +756,7 @@
     hidden_prop_vals?: Set<number | string> // Track hidden property values (e.g. coordination numbers, Wyckoff positions, charges)
     axis_lock_active?: boolean // Disable OrbitControls when axis-locked rotation is active
     external_dragging?: boolean // External dragging state (from parent component)
+    external_view_rotation?: boolean // Parent owns view rotation (mobile custom touch rotate) → disable TB native rotate
     on_reset_rotation?: () => void // Called when gizmo clicked to reset structure rotation
     on_atom_context_menu?: (
       site_idx: number,
@@ -4239,7 +4245,8 @@
     // - is_box_selecting (box selection in progress)
     // - is_rotating_atoms (atom rotation via Shift+drag in progress)
     noRotate: rotate_speed === 0 || axis_lock_active ||
-      external_dragging || is_box_selecting || is_rotating_atoms,
+      external_dragging || is_box_selecting || is_rotating_atoms ||
+      external_view_rotation,
     noZoom: zoom_speed === 0 || axis_lock_active || external_dragging,
     // Disable pan when atom operations are in progress
     noPan: pan_speed === 0 || axis_lock_active || external_dragging ||

@@ -4,6 +4,7 @@
   import { ContextMenu, Icon, Spinner, toggle_fullscreen } from '$lib'
   import { type ColorSchemeName, element_color_schemes } from '$lib/colors'
   import { decompress_file, load_from_url, check_tauri } from '$lib/io'
+  import { isMobile } from '$lib/api/transport'
   import { DosAnalysisPane, DosPlot, CohpAnalysisPane, CohpPlot, BandAnalysisPane, BandPlot, FreqAnalysisPane, ChargeAnalysisPane } from '$lib/electronic'
   import type { DOSSessionInfo, DosViewState, CohpViewState, BandViewState } from '$lib/electronic'
   import { API_BASE } from '$lib/api/config'
@@ -2377,6 +2378,11 @@
     get_scene_props: () => settings.scene_props,
     set_scene_props_rotation: (r) => { settings.scene_props.rotation = r },
     get_rotation_target_ref: () => rotation_target_ref,
+    // Orbit camera + target around the structure center (box center for periodic,
+    // centroid for molecules), preserving any pan offset. Reuses the same math as
+    // the hand-gesture rotate so a custom touch-drag can rotate about the
+    // structure center instead of TrackballControls' pan-shifted target.
+    rotate_around_center: (axis, angle) => gesture_api.rotate(axis, angle),
     push_to_undo,
     push_atom_entry: (inv) => { sel_state.push_atom_entry(inv); pencil.push_bond_undo() },
     undo,
@@ -3908,6 +3914,7 @@
             {reset_camera_up_trigger}
             repaint_trigger={webgl_repaint_trigger}
             external_dragging={interaction.is_dragging_atom || interaction.is_rotating_atoms}
+            external_view_rotation={isMobile()}
             is_box_selecting={interaction.is_box_selecting}
             is_rotating_atoms={interaction.is_rotating_atoms}
             is_dragging_atom={interaction.is_dragging_atom}
