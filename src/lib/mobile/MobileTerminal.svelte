@@ -143,7 +143,10 @@
         const ch = await transport.ptyOpen(session_id, cols, rows, (bytes) => {
           if (disposed) return
           if (gate_open) {
-            term.write(bytes)
+            // Decode through the SAME decoder used during the gate window, so a
+            // partial UTF-8 sequence buffered across the gate boundary completes
+            // instead of being dropped/corrupted.
+            term.write(decoder.decode(bytes, { stream: true }))
             return
           }
           // Setup window: scan (don't render) for the cwd + completion sentinel.

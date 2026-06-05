@@ -59,7 +59,11 @@ export function shared_define(srv_port: number): Record<string, string> {
   // the SPA runs on the phone, so `localhost` is the phone — not the backend.
   // Bake the LAN IP into the backend URL so API/SSE/WS calls reach the Mac.
   // (The Python backend already binds 0.0.0.0; CORS is whitelisted in tauri-dev.mjs.)
-  const host = process.env.TAURI_DEV_HOST || `localhost`
+  const raw_host = process.env.TAURI_DEV_HOST || `localhost`
+  // Wrap a bare IPv6 literal in [] so the URL stays valid (http://[::1]:port).
+  const host = raw_host.includes(`:`) && !raw_host.startsWith(`[`)
+    ? `[${raw_host}]`
+    : raw_host
   return {
     __CATGO_SERVER_URL__: JSON.stringify(`http://${host}:${srv_port}`),
   }

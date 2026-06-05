@@ -45,7 +45,12 @@ if (is_dev) {
   // would otherwise reject that cross-origin — whitelist it via the env var
   // main.py reads (CATGO_ALLOWED_ORIGINS). Inherited by beforeDevCommand → python.
   if (process.env.TAURI_DEV_HOST) {
-    const mobile_origin = `http://${process.env.TAURI_DEV_HOST}:${desktop_port}`
+    const raw_host = process.env.TAURI_DEV_HOST
+    // Wrap a bare IPv6 literal in [] so the origin stays valid (http://[::1]:port).
+    const host = raw_host.includes(`:`) && !raw_host.startsWith(`[`)
+      ? `[${raw_host}]`
+      : raw_host
+    const mobile_origin = `http://${host}:${desktop_port}`
     // main.py reads CATGO_ALLOWED_ORIGINS as a comma-separated list — append to any
     // existing value rather than clobber it, so other allowed origins survive.
     extra_env.CATGO_ALLOWED_ORIGINS = [process.env.CATGO_ALLOWED_ORIGINS, mobile_origin]
