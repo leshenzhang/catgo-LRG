@@ -52,6 +52,16 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 
+      - name: Install wasm-pack
+        # The Tauri beforeBuildCommand (pnpm desktop:build → build:wasm) compiles
+        # the ferrox/chgdiff/catrender WASM crates and hard-fails if wasm-pack is
+        # missing. Desktop CI installs it too; mirror that here.
+        run: |
+          if ! command -v wasm-pack >/dev/null 2>&1; then
+            curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          fi
+          wasm-pack --version
+
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
