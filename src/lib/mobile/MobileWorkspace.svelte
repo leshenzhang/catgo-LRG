@@ -86,6 +86,14 @@
   // so double-counts the keyboard and leaves a black gap above it.
 
   let term_cwd = $state(``)
+  // Imperative handle from the mounted Structure editor — drives the mobile
+  // undo/redo buttons (desktop uses Ctrl+Z; mobile has no keyboard).
+  let editor_api = $state<{
+    undo: () => void
+    redo: () => void
+    can_undo: () => boolean
+    can_redo: () => boolean
+  }>()
   const has_structure = $derived(structure != null)
   const has_content = $derived(structure != null || trajectory != null)
 
@@ -322,6 +330,22 @@
       </div>
       <div class="mw-actions">
         <LocaleSwitch compact />
+        {#if has_structure && editor_api}
+          <button type="button" class="mw-act" onclick={() => editor_api?.undo()} disabled={!editor_api.can_undo()} title={t(`common.undo`)} aria-label={t(`common.undo`)}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 10h13a4 4 0 010 8H7" />
+              <path d="M3 10l4-4M3 10l4 4" />
+            </svg>
+            <span class="mw-act-label">{t(`common.undo`)}</span>
+          </button>
+          <button type="button" class="mw-act" onclick={() => editor_api?.redo()} disabled={!editor_api.can_redo()} title={t(`common.redo`)} aria-label={t(`common.redo`)}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 10H8a4 4 0 000 8h9" />
+              <path d="M21 10l-4-4M21 10l-4 4" />
+            </svg>
+            <span class="mw-act-label">{t(`common.redo`)}</span>
+          </button>
+        {/if}
         {#if session_id}
           <button type="button" class="mw-act" onclick={() => (files_open = true)} title={t(`mobile.action_remote_files`)}>
             <Icon icon="Directory" />
@@ -378,6 +402,7 @@
           <Structure
             bind:structure
             bind:saveable_structure
+            bind:editor_api
             show_controls={true}
             fullscreen_toggle={false}
             allow_file_drop={false}

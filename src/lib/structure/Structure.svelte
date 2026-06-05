@@ -735,6 +735,7 @@
     lattice_props: lattice_props_in = $bindable(undefined),
     controls_open = $bindable(false),
     info_pane_open = $bindable(false),
+    editor_api = $bindable(undefined),
     enable_measure_mode = $bindable(true),
     background_color = $bindable(undefined),
     background_opacity = $bindable(0.1),
@@ -863,6 +864,13 @@
       enable_info_pane?: boolean
       enable_measure_mode?: boolean
       info_pane_open?: boolean
+      /** Imperative editor handle for parents (e.g. mobile undo/redo buttons). */
+      editor_api?: {
+        undo: () => void
+        redo: () => void
+        can_undo: () => boolean
+        can_redo: () => boolean
+      }
       fullscreen_toggle?: Snippet<[]> | boolean
       hidden_toolbar_items?: string[]
       bottom_left?: Snippet<[{ structure?: AnyStructure }]>
@@ -2334,6 +2342,18 @@
   function push_selection_to_undo() {
     sel_state.selection_history = [...sel_state.selection_history, [...selected_sites]]
   }
+
+  // Imperative handle for parents (mobile undo/redo buttons). Desktop drives
+  // undo/redo via keyboard; mobile has no keyboard, so expose it explicitly.
+  // can_undo/can_redo are getters so callers re-read live state reactively.
+  $effect(() => {
+    editor_api = {
+      undo,
+      redo,
+      can_undo: () => sel_state.can_undo,
+      can_redo: () => sel_state.can_redo,
+    }
+  })
 
   // Vacuum box modal helpers
   function open_vacuum_box_for_tool(tool: typeof pending_tool_after_wrap) {
