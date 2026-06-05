@@ -52,6 +52,17 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
 
+      - name: Rust cache
+        # Cache the Cargo registry + target dirs so re-runs don't recompile every
+        # crate from scratch (~10 min → ~1-2 min). Keyed per-job; the iOS lib +
+        # WASM crate target dirs both live under src-tauri/target and the workspace.
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+            extensions/rust-wasm -> target
+          cache-on-failure: true
+
       - name: Install wasm-pack
         # The Tauri beforeBuildCommand (pnpm desktop:build → build:wasm) compiles
         # the ferrox/chgdiff/catrender WASM crates and hard-fails if wasm-pack is
@@ -178,6 +189,10 @@ jobs:
           rm -f ~/".appstoreconnect/private_keys/AuthKey_${APPLE_API_KEY_ID}.p8"
 
       - name: Upload artifacts
+        # always() so a successfully-built+signed IPA is saved even when the
+        # TestFlight upload step flakes — download it and submit via Transporter
+        # without a full rebuild.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: catgo-ios
