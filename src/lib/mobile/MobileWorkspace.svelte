@@ -141,6 +141,24 @@
   function open_local(): void {
     file_input?.click()
   }
+
+  async function open_github(): Promise<void> {
+    // On Android/iOS the Tauri WebView ignores <a target="_blank">, so route
+    // external URLs through the shell plugin (desktop + mobile app); fall back
+    // to window.open in the browser/web build.
+    const url = `https://github.com/Hello-QM/catgo-LRG`
+    try {
+      const { check_tauri } = await import(`$lib/io/tauri`)
+      if (check_tauri()) {
+        const { open } = await import(`@tauri-apps/plugin-shell`)
+        await open(url)
+        return
+      }
+    } catch {
+      // fall through to web behaviour
+    }
+    window.open(url, `_blank`, `noopener`)
+  }
   async function on_local_file(e: Event): Promise<void> {
     const input = e.target as HTMLInputElement
     const f = input.files?.[0]
@@ -244,7 +262,10 @@
   {#if mode === `choose`}
     <div class="mw-choose">
       <div class="mw-choose-top">
-        <div class="mw-choose-title">CatGo</div>
+        <div class="mw-choose-brand">
+          <img class="mw-choose-logo" src="/favicon.svg" alt="CatGo" width="40" height="40" />
+          <div class="mw-choose-title">CatGo</div>
+        </div>
         <LocaleSwitch />
       </div>
       <div class="mw-choose-sub">{t(`mobile.choose_prompt`)}</div>
@@ -271,6 +292,20 @@
           <span class="mw-choice-desc">{t(`mobile.choice_connect_desc`)}</span>
         </button>
       {/if}
+      <button
+        type="button"
+        class="mw-github"
+        onclick={open_github}
+        title="Star CatGo on GitHub"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 012-.27c.68 0 1.36.09 2 .27 1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+        <span class="mw-github-text">Star on GitHub</span>
+        <svg class="mw-github-star" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 17.27l5.18 3.13-1.37-5.9 4.59-3.97-6.04-.52L12 4.5 9.64 10l-6.04.52 4.59 3.97-1.37 5.9z"/>
+        </svg>
+      </button>
     </div>
   {:else}
     <!-- Top bar: layout switch + actions -->
@@ -427,10 +462,46 @@
     justify-content: space-between;
     gap: 12px;
   }
+  .mw-choose-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .mw-choose-logo {
+    width: 40px;
+    height: 40px;
+    border-radius: 9px;
+    flex: none;
+  }
   .mw-choose-title {
     font-size: 1.8em;
     font-weight: 700;
     color: var(--text-color, #e0e0e0);
+  }
+  .mw-github {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: 100%;
+    margin-top: 6px;
+    padding: 9px 14px;
+    border-radius: 9px;
+    border: 1px solid var(--border-color, #2c3340);
+    background: var(--surface-color, #1b212b);
+    color: var(--text-color-muted, #94a3b8);
+    font-family: inherit;
+    font-size: 0.9em;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    box-sizing: border-box;
+  }
+  .mw-github:hover {
+    color: var(--text-color, #e0e0e0);
+  }
+  .mw-github-star {
+    color: #f1c40f;
   }
   .mw-choose-sub {
     font-size: 0.95em;

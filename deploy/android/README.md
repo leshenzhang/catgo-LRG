@@ -170,6 +170,26 @@ class MainActivity : TauriActivity() {
 }
 ```
 
+## 2c. Regenerate the launcher icon (REQUIRED — re-apply after every `init`)
+
+`tauri android init` writes the **default Tauri icon** (the cyan/yellow "8")
+into `src-tauri/gen/android/app/src/main/res/mipmap-*/`. Those mipmaps are
+machine-local (under the gitignored `src-tauri/gen/`), so the desktop icon work
+in `src-tauri/icons/` does NOT propagate to them — the APK ships the default
+icon unless you regenerate after each `init`.
+
+`scripts/generate-icons.js` only covers the desktop/Windows/macOS sizes; it does
+**not** touch Android. Run the Tauri icon command to (re)generate the Android
+mipmaps from the CatGo cat logo so the launcher icon matches desktop:
+
+```bash
+# from the repo root — regenerates src-tauri/icons/* AND the Android mipmaps
+pnpm tauri icon desktop/logo.png
+```
+
+Verify `mipmap-xxxhdpi/ic_launcher.png` now shows the navy cat "C" mark, not the
+default "8".
+
 ## 3. Run on an emulator / device (dev)
 
 ```bash
