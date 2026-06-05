@@ -99,7 +99,7 @@ jobs:
         # for the iOS commands via --config; Android builds from gen/android with the
         # unchanged tauri.conf identifier. Pass the SAME override on build so any
         # xcodegen regeneration keeps the iOS bundle id.
-        run: pnpm tauri ios init --config '{"identifier":"org.catgo.app","bundle":{"fileAssociations":[]}}'
+        run: pnpm tauri ios init --config '{"identifier":"org.catgo.app"}'
 
       - name: Generate app icons (CatGo cat)
         # MUST run AFTER `ios init`: `tauri icon` only fills the gen/apple
@@ -138,7 +138,7 @@ jobs:
       # ---- Unsigned simulator smoke build (no Apple account needed) ----
       - name: Build (simulator, unsigned)
         if: ${{ !inputs.signed }}
-        run: pnpm tauri ios build --target aarch64-sim --config '{"identifier":"org.catgo.app","bundle":{"fileAssociations":[]}}'
+        run: pnpm tauri ios build --target aarch64-sim --config '{"identifier":"org.catgo.app"}'
 
       # ---- Signed device IPA ----
       # Manual signing via Tauri's native env vars: Tauri imports the cert into a
@@ -159,7 +159,7 @@ jobs:
           # terminal/files (russh over Tauri invoke, not HTTP). Backend-only UI
           # (chat/workflow/plugin_hub) is already hidden on mobile.
           VITE_STATIC_ONLY: '1'
-        run: pnpm tauri ios build --export-method app-store-connect --config '{"identifier":"org.catgo.app","bundle":{"fileAssociations":[]}}'
+        run: pnpm tauri ios build --export-method app-store-connect --config '{"identifier":"org.catgo.app"}'
 
       # ---- Upload the signed IPA to App Store Connect (TestFlight) ----
       # Needs an App Store Connect API key (App Store Connect → Users and Access →
