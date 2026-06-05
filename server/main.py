@@ -9,6 +9,20 @@ import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# PyInstaller windowed build (console=False) leaves sys.stdout/sys.stderr as None
+# on Windows when the .exe is launched directly (e.g. double-clicked). That makes
+# the port-handshake print() and uvicorn's ColourizedFormatter crash —
+# ColourizedFormatter.__init__ calls sys.stdout.isatty(), raising
+# "AttributeError: 'NoneType' object has no attribute 'isatty'". Restore writable
+# streams so logging and uvicorn start cleanly. (When launched by the desktop app
+# the streams are real pipes, so this guard is a no-op.)
+if sys.stdout is None or sys.stderr is None:
+    _devnull = open(os.devnull, "w")  # noqa: SIM115
+    if sys.stdout is None:
+        sys.stdout = _devnull
+    if sys.stderr is None:
+        sys.stderr = _devnull
+
 # Configure root logger so workflow engine logs are visible
 logging.basicConfig(
     level=logging.INFO,
