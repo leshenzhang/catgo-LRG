@@ -92,6 +92,13 @@ jobs:
         # fails with "Could not resolve ./docs-chunks.json".
         run: pnpm run build:doc-chunks
 
+      - name: Generate app icons (CatGo cat)
+        # tauri ios init builds gen/apple/Assets.xcassets/AppIcon from src-tauri/icons.
+        # The iOS AppIcon set (src-tauri/icons/ios) isn't committed, so without this
+        # init falls back to the default Tauri icon (the cyan/yellow "8"). Regenerate
+        # all icons from the cat logo first so the iOS app ships the CatGo icon.
+        run: pnpm tauri icon desktop/logo.png
+
       - name: Initialise the iOS project
         # Generates src-tauri/gen/apple (xcodegen-based Xcode project). Idempotent.
         # com.catgo.app (the tauri.conf identifier, kept for Android) is taken on the
