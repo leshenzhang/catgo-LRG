@@ -32,6 +32,10 @@ import { Buffer } from 'node:buffer'
 const offset = worktree_offset()
 const desktop_port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3100 + offset
 const srv_port = server_port(offset)
+// On mobile, the device reaches the dev server over the LAN, not localhost.
+// `tauri ios/android dev` sets TAURI_DEV_HOST to the Mac's LAN IP — bind Vite there
+// (and point HMR at it) so the phone can load the frontend. Desktop leaves it unset.
+const tauri_dev_host = process.env.TAURI_DEV_HOST
 
 // Ensure .svelte-kit/tsconfig.json stub exists so the root tsconfig.json
 // "extends" doesn't cause hard errors in Vite 7.x esbuild transforms.
@@ -328,9 +332,17 @@ export default defineConfig({
             try {
               const ext = (p.split(`.`).pop() || ``).toLowerCase()
               const mime: Record<string, string> = {
-                png: `image/png`, jpg: `image/jpeg`, jpeg: `image/jpeg`, gif: `image/gif`,
-                webp: `image/webp`, bmp: `image/bmp`, svg: `image/svg+xml`, ico: `image/x-icon`,
-                tif: `image/tiff`, tiff: `image/tiff`, pdf: `application/pdf`,
+                png: `image/png`,
+                jpg: `image/jpeg`,
+                jpeg: `image/jpeg`,
+                gif: `image/gif`,
+                webp: `image/webp`,
+                bmp: `image/bmp`,
+                svg: `image/svg+xml`,
+                ico: `image/x-icon`,
+                tif: `image/tiff`,
+                tiff: `image/tiff`,
+                pdf: `application/pdf`,
               }
               res.setHeader(`Content-Type`, mime[ext] || `application/octet-stream`)
               res.setHeader(`Cache-Control`, `no-cache`)
@@ -732,7 +744,13 @@ export default defineConfig({
       },
     } satisfies Plugin,
     agentBridgePlugin(srv_port),
-    svelte(),
+    // On mobile dev, inject component CSS via JS (emitCss: false) instead of
+    // separate `?type=style&lang.css` chunks. Those split-CSS chunks race on
+    // cold load over the LAN — the browser can request a component's CSS before
+    // its transform has populated the CSS cache, so vite-plugin-svelte hands
+    // PostCSS the *script* → "[postcss] Unknown word" overlay (e.g. on the large,
+    // lazily-loaded NodeConfigPanel). Desktop + production keep emitCss on.
+    svelte(tauri_dev_host ? { emitCss: false } : {}),
     yaml(),
     {
       name: `vite-plugin-cloudflare-redirects`,
@@ -777,10 +795,16 @@ export default defineConfig({
   },
 
   server: {
-    host: `127.0.0.1`,
+    host: tauri_dev_host || `127.0.0.1`,
     port: desktop_port,
     strictPort: true,
     fs: { strict: false },
+    // Point the HMR client at the LAN dev server explicitly — without an
+    // explicit clientPort it tries port 80 (ws://<host>/) first, fails, and
+    // only then falls back. clientPort pins it to the actual dev-server port.
+    ...(tauri_dev_host
+      ? { hmr: { protocol: `ws`, host: tauri_dev_host, clientPort: desktop_port } }
+      : {}),
   },
 
   define: {

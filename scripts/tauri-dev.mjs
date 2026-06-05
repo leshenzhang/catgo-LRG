@@ -24,33 +24,53 @@ function worktree_offset() {
 }
 
 const args = process.argv.slice(2)
-const subcommand = args[0]
 const extra_env = {}
 let final_args = args
 
-if (subcommand === 'dev') {
+// `dev` is args[0] for desktop (`tauri dev`) but args[1] for mobile
+// (`tauri ios dev` / `tauri android dev`). Handle both.
+const dev_index = args.indexOf('dev')
+const is_desktop_dev = dev_index === 0
+const is_dev = dev_index === 0 || dev_index === 1
+
+if (is_dev) {
   const offset = worktree_offset()
   const desktop_port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3100 + offset
-  const dev_url = `http://localhost:${desktop_port}`
-  // Drop externalBin in dev: beforeDevCommand starts the Python backend
-  // separately (pnpm desktop:serve), so Tauri doesn't need a sidecar exe to exist.
-  const config_override = JSON.stringify({
-    build: { devUrl: dev_url },
-    bundle: { externalBin: [] },
-  })
 
-  // Write to a temp file so Windows cmd.exe doesn't strip the JSON's quotes
-  // when spawn runs with shell: true. Tauri's --config accepts a file path.
-  const config_path = join(tmpdir(), `catgo-tauri-dev-${process.pid}.json`)
-  writeFileSync(config_path, config_override)
-
-  console.log(`[tauri-dev] worktree offset=${offset}, devUrl=${dev_url}`)
-
-  // Ensure Vite picks the same port via process.env.PORT
+  // Ensure Vite picks the same port via process.env.PORT (web + mobile).
   extra_env.PORT = String(desktop_port)
 
-  // Insert --config right after `dev`; user's original args follow.
-  final_args = ['dev', '--config', config_path, ...args.slice(1)]
+  // Mobile dev: the phone loads the SPA from the Mac's LAN IP, so its page
+  // origin is http://<LAN-IP>:<desktop_port>. The backend (bound to 0.0.0.0)
+  // would otherwise reject that cross-origin — whitelist it via the env var
+  // main.py reads (CATGO_ALLOWED_ORIGINS). Inherited by beforeDevCommand → python.
+  if (process.env.TAURI_DEV_HOST) {
+    extra_env.CATGO_ALLOWED_ORIGINS =
+      `http://${process.env.TAURI_DEV_HOST}:${desktop_port}`
+    console.log(
+      `[tauri-dev] mobile: allow backend origin ${extra_env.CATGO_ALLOWED_ORIGINS}`,
+    )
+  }
+
+  // Desktop `tauri dev` needs its devUrl pinned to the worktree port via
+  // --config. Mobile gets devUrl from tauri.conf.json + TAURI_DEV_HOST, so we
+  // leave its args untouched (only the env above applies).
+  if (is_desktop_dev) {
+    const dev_url = `http://localhost:${desktop_port}`
+    // Drop externalBin in dev: beforeDevCommand starts the Python backend
+    // separately (pnpm desktop:serve), so Tauri doesn't need a sidecar exe.
+    const config_override = JSON.stringify({
+      build: { devUrl: dev_url },
+      bundle: { externalBin: [] },
+    })
+    // Write to a temp file so Windows cmd.exe doesn't strip the JSON's quotes
+    // when spawn runs with shell: true. Tauri's --config accepts a file path.
+    const config_path = join(tmpdir(), `catgo-tauri-dev-${process.pid}.json`)
+    writeFileSync(config_path, config_override)
+    console.log(`[tauri-dev] worktree offset=${offset}, devUrl=${dev_url}`)
+    // Insert --config right after `dev`; user's original args follow.
+    final_args = ['dev', '--config', config_path, ...args.slice(1)]
+  }
 }
 
 const child = spawn('tauri', final_args, {

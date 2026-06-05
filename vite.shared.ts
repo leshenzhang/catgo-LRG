@@ -55,8 +55,13 @@ export function server_port(offset: number): number {
  * Desktop config extends this with `__CATGO_DESKTOP__`.
  */
 export function shared_define(srv_port: number): Record<string, string> {
+  // On mobile (`tauri ios/android dev` sets TAURI_DEV_HOST to the Mac's LAN IP),
+  // the SPA runs on the phone, so `localhost` is the phone — not the backend.
+  // Bake the LAN IP into the backend URL so API/SSE/WS calls reach the Mac.
+  // (The Python backend already binds 0.0.0.0; CORS is whitelisted in tauri-dev.mjs.)
+  const host = process.env.TAURI_DEV_HOST || `localhost`
   return {
-    __CATGO_SERVER_URL__: JSON.stringify(`http://localhost:${srv_port}`),
+    __CATGO_SERVER_URL__: JSON.stringify(`http://${host}:${srv_port}`),
   }
 }
 
