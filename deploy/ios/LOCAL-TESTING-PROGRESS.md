@@ -90,6 +90,28 @@ the phone loads the UI from `http://<LAN-IP>:3100` and HMR pushes edits live.
   change the bundle id to something unique (e.g. `com.<yourname>.catgo`) and mirror
   it in `src-tauri/tauri.conf.json`. (Not needed here — `com.catgo.app` was accepted.)
 
+## Mobile/iOS code changes — map & adjustable knobs
+
+For anyone (or Claude) picking this up: every change below is **gated on mobile**
+(mostly `TAURI_DEV_HOST` being set), so desktop + production behaviour is unchanged.
+If you need to tweak the mobile build, start here. Each file also has inline `why`
+comments at the change site.
+
+| Area | File(s) | What & why | Knob to adjust |
+|------|---------|------------|----------------|
+| LAN backend routing | `vite.shared.ts`, `scripts/tauri-dev.mjs` | The phone isn't `localhost`; bake the Mac's LAN IP into `SERVER_URL` and whitelist the phone origin for the backend's CORS (`CATGO_ALLOWED_ORIGINS`). | Set `TAURI_DEV_HOST=<your Mac LAN IP>` at launch (`ipconfig getifaddr en0`). Both halves derive from it. |
+| Vite dev (LAN/HMR/CSS) | `vite.desktop.config.ts` | Binds Vite to the LAN, pins HMR `clientPort`, and `emitCss:false` on mobile to dodge a cold-load PostCSS race. | `emitCss:false` disables CSS-only HMR on mobile dev (style edits reload the whole component). Drop it if that race no longer bites. |
+| Icon rendering | `src/lib/Icon.svelte` | `height: 1em` (not `auto`) — iOS WKWebView collapses a `height:auto` + viewBox inline SVG to 0px (blank squares). | Do NOT revert to `height: auto`. |
+| Tofu glyph icons | `MobileWorkspace.svelte`, `MobileFiles.svelte`, `LocaleSwitch.svelte` | iOS has no font glyph for `⬚ ⊟ ⊞ ▭ ⟳ ↰`; replaced with `<Icon>` SVG. `LocaleSwitch` gained a `compact` (icon-only) mode. | For any new mobile icon use `<Icon>` (from `src/lib/icons.ts`), never a raw Unicode symbol. |
+| 3D viewer keep-warm | `MobileWorkspace.svelte` (`.mw-pane.mw-struct.hidden`) | `display:none` zeroes the WebGL canvas → blank viewer on return from the terminal. The struct pane stays laid out (off-screen, `visibility:hidden`) when inactive. | Do NOT `display:none` the structure pane. |
+| Action bar overflow | `MobileWorkspace.svelte` | Compact locale switch + scrollable/shrinkable `.mw-actions` so the buttons (up to 6 when connected) never clip. | — |
+| Terminal | `MobileTerminal.svelte` | Hides the OSC7 cwd-setup echo via a render-gate (private OSC 99 sentinel); registers the cwd hook for **zsh** (`precmd_functions`, not bash `PROMPT_COMMAND`); adds left/right padding. | — |
+| Local file picker | `MobileWorkspace.svelte` (`accept="*/*"`) | iOS greys out unknown extensions (`.xyz`, `.cif`, …); `*/*` lets you pick any file and the handler parses by content. | Production fix: declare the formats as UTTypes in `src-tauri/gen/apple/.../Info.plist`. |
+
+App icon: regenerated locally via `pnpm tauri icon src-tauri/icons/icon.png`, but
+`gen/apple` is machine-local — the durable fix is a 1024×1024 master so `tauri icon` /
+`ios init` always emit the real CatGo icon instead of the Tauri placeholder.
+
 ## Build prerequisites recap (all satisfied on this Mac)
 
 - Xcode 26.5, license accepted · iOS 26.5 SDK + simulator runtime
