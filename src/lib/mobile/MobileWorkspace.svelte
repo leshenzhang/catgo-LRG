@@ -235,7 +235,7 @@
 <input
   bind:this={file_input}
   type="file"
-  accept=".cif,.poscar,.vasp,.xyz,.extxyz,.json,.cube,.lammps,.data,*"
+  accept="*/*"
   onchange={on_local_file}
   hidden
 />
