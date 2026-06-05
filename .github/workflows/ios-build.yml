@@ -95,6 +95,14 @@ jobs:
             echo "::warning::No iOS Info.plist found under src-tauri/gen/apple"
           fi
 
+      - name: Debug signing inputs
+        if: ${{ inputs.signed }}
+        run: |
+          echo "=== gen/apple tree (top) ===" ; ls -la src-tauri/gen/apple || true
+          echo "=== project.yml signing/bundle lines ===" ; grep -niE "PRODUCT_BUNDLE_IDENTIFIER|bundleIdPrefix|CODE_SIGN|PROVISIONING|DEVELOPMENT_TEAM|com\.catgo|org\.catgo" src-tauri/gen/apple/project.yml 2>/dev/null || echo "no project.yml matches"
+          echo "=== pbxproj PRODUCT_BUNDLE_IDENTIFIER ===" ; grep -RhoE "PRODUCT_BUNDLE_IDENTIFIER = [^;]+;" src-tauri/gen/apple 2>/dev/null | sort -u || echo "none"
+          echo "=== installed provisioning profiles ===" ; ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" 2>/dev/null || echo "none yet"
+
       # ---- Unsigned simulator smoke build (no Apple account needed) ----
       - name: Build (simulator, unsigned)
         if: ${{ !inputs.signed }}
