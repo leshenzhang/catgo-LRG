@@ -147,7 +147,7 @@
             return
           }
           // Setup window: scan (don't render) for the cwd + completion sentinel.
-          setup_scan += decoder.decode(bytes)
+          setup_scan += decoder.decode(bytes, { stream: true })
           const cwd = /\x1b\]7;file:\/\/[^/]*(\/[^\x07\x1b]*)/.exec(setup_scan)
           if (cwd) {
             try {

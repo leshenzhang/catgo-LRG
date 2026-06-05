@@ -276,11 +276,11 @@
     <!-- Top bar: layout switch + actions -->
     <header class="mw-bar">
       <div class="mw-tabs">
-        <button type="button" class:active={mode === `structure`} onclick={() => (mode = `structure`)} title={t(`mobile.tab_structure`)}><Icon icon="Atom" /></button>
+        <button type="button" class:active={mode === `structure`} onclick={() => (mode = `structure`)} title={t(`mobile.tab_structure`)} aria-label={t(`mobile.tab_structure`)}><Icon icon="Atom" /></button>
         {#if !is_web}
-          <button type="button" class:active={mode === `split-v`} onclick={() => (mode = `split-v`)} title={t(`mobile.tab_split_stacked`)}><Icon icon="Layers" /></button>
-          <button type="button" class:active={mode === `split-h`} onclick={() => (mode = `split-h`)} title={t(`mobile.tab_split_side`)}><Icon icon="TwoColumns" /></button>
-          <button type="button" class:active={mode === `terminal`} onclick={() => (mode = `terminal`)} title={t(`mobile.tab_terminal`)}><Icon icon="Terminal" /></button>
+          <button type="button" class:active={mode === `split-v`} onclick={() => (mode = `split-v`)} title={t(`mobile.tab_split_stacked`)} aria-label={t(`mobile.tab_split_stacked`)}><Icon icon="Layers" /></button>
+          <button type="button" class:active={mode === `split-h`} onclick={() => (mode = `split-h`)} title={t(`mobile.tab_split_side`)} aria-label={t(`mobile.tab_split_side`)}><Icon icon="TwoColumns" /></button>
+          <button type="button" class:active={mode === `terminal`} onclick={() => (mode = `terminal`)} title={t(`mobile.tab_terminal`)} aria-label={t(`mobile.tab_terminal`)}><Icon icon="Terminal" /></button>
         {/if}
       </div>
       <div class="mw-actions">
