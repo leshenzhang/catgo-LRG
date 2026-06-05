@@ -134,6 +134,7 @@ jobs:
           # Xcode auto-creates the signing profile for org.catgo.app via the key.
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_KEY_PATH: /Users/runner/.appstoreconnect/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
           # Production (no Mac/LAN, no Python sidecar on mobile): build static-only
           # so stray backend fetches return a friendly 503 instead of hanging on
           # localhost. Mobile-native paths still work — local structure view/edit,
