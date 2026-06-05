@@ -27,6 +27,12 @@ const mobile: Record<string, string> = {
   action_import_database: `从数据库导入`,
   action_save_structure:  `保存结构`,
   action_disconnect:      `断开连接`,
+  // 顶部操作栏图标下方的简短标签
+  action_remote_files_short:    `文件`,
+  action_open_local_short:      `打开`,
+  action_import_database_short: `数据库`,
+  action_save_structure_short:  `保存`,
+  action_disconnect_short:      `断开`,
 
   // ── 结构面板 (MobileWorkspace) ───────────────────────────────────────
   no_structure_loaded:    `未加载结构。`,

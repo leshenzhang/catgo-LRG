@@ -18,6 +18,7 @@
   import { transport, type SftpEntry } from '$lib/api/transport'
   import MobileFileViewer from './MobileFileViewer.svelte'
   import { humanSize, joinPath, parentPath, isStructureName } from './files-util'
+  import Icon from '$lib/Icon.svelte'
   import { t } from '$lib/i18n/index.svelte'
 
   interface Props {
@@ -195,7 +196,7 @@
       onclick={refresh}
       disabled={status === `loading`}
     >
-      ⟳
+      <Icon icon="Reset" />
     </button>
   </header>
 
@@ -228,7 +229,7 @@
         {#if !at_root}
           <li>
             <button type="button" class="mf-row mf-up" onclick={go_up}>
-              <span class="mf-icon">↰</span>
+              <span class="mf-icon"><Icon icon="ArrowUp" /></span>
               <span class="mf-name">..</span>
               <span class="mf-meta">{t(`mobile.parent`)}</span>
             </button>

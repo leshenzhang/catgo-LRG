@@ -31,6 +31,7 @@
   import { loadConnections } from './connections'
   import { check_tauri } from '$lib/io/tauri'
   import LocaleSwitch from '$lib/i18n/LocaleSwitch.svelte'
+  import Icon from '$lib/Icon.svelte'
   import { t, load_i18n_module } from '$lib/i18n/index.svelte'
 
   load_i18n_module(`mobile`)
@@ -248,24 +249,24 @@
       </div>
       <div class="mw-choose-sub">{t(`mobile.choose_prompt`)}</div>
       <button type="button" class="mw-choice" onclick={open_local}>
-        <span class="mw-choice-icon">⬚</span>
+        <span class="mw-choice-icon"><Icon icon="Atom" /></span>
         <span class="mw-choice-main">{t(`mobile.choice_structure_main`)}</span>
         <span class="mw-choice-desc">{t(`mobile.choice_structure_desc`)}</span>
       </button>
       <button type="button" class="mw-choice" onclick={() => (db_visible = true)}>
-        <span class="mw-choice-icon">🗄</span>
+        <span class="mw-choice-icon"><Icon icon="Database" /></span>
         <span class="mw-choice-main">{t(`mobile.choice_database_main`)}</span>
         <span class="mw-choice-desc">{t(`mobile.choice_database_desc`)}</span>
       </button>
       {#if is_web}
         <div class="mw-choice mw-choice-disabled" aria-disabled="true">
-          <span class="mw-choice-icon">⌨</span>
+          <span class="mw-choice-icon"><Icon icon="Terminal" /></span>
           <span class="mw-choice-main">{t(`mobile.choice_connect_main`)}</span>
           <span class="mw-choice-desc">{t(`mobile.connect_app_only`)}</span>
         </div>
       {:else}
         <button type="button" class="mw-choice" onclick={() => (mode = `terminal`)}>
-          <span class="mw-choice-icon">⌨</span>
+          <span class="mw-choice-icon"><Icon icon="Terminal" /></span>
           <span class="mw-choice-main">{t(`mobile.choice_connect_main`)}</span>
           <span class="mw-choice-desc">{t(`mobile.choice_connect_desc`)}</span>
         </button>
@@ -275,25 +276,40 @@
     <!-- Top bar: layout switch + actions -->
     <header class="mw-bar">
       <div class="mw-tabs">
-        <button type="button" class:active={mode === `structure`} onclick={() => (mode = `structure`)} title={t(`mobile.tab_structure`)}>⬚</button>
+        <button type="button" class:active={mode === `structure`} onclick={() => (mode = `structure`)} title={t(`mobile.tab_structure`)}><Icon icon="Atom" /></button>
         {#if !is_web}
-          <button type="button" class:active={mode === `split-v`} onclick={() => (mode = `split-v`)} title={t(`mobile.tab_split_stacked`)}>⊟</button>
-          <button type="button" class:active={mode === `split-h`} onclick={() => (mode = `split-h`)} title={t(`mobile.tab_split_side`)}>⊞</button>
-          <button type="button" class:active={mode === `terminal`} onclick={() => (mode = `terminal`)} title={t(`mobile.tab_terminal`)}>▭</button>
+          <button type="button" class:active={mode === `split-v`} onclick={() => (mode = `split-v`)} title={t(`mobile.tab_split_stacked`)}><Icon icon="Layers" /></button>
+          <button type="button" class:active={mode === `split-h`} onclick={() => (mode = `split-h`)} title={t(`mobile.tab_split_side`)}><Icon icon="TwoColumns" /></button>
+          <button type="button" class:active={mode === `terminal`} onclick={() => (mode = `terminal`)} title={t(`mobile.tab_terminal`)}><Icon icon="Terminal" /></button>
         {/if}
       </div>
       <div class="mw-actions">
-        <LocaleSwitch />
+        <LocaleSwitch compact />
         {#if session_id}
-          <button type="button" class="mw-act" onclick={() => (files_open = true)} title={t(`mobile.action_remote_files`)}>📁</button>
+          <button type="button" class="mw-act" onclick={() => (files_open = true)} title={t(`mobile.action_remote_files`)}>
+            <Icon icon="Directory" />
+            <span class="mw-act-label">{t(`mobile.action_remote_files_short`)}</span>
+          </button>
         {/if}
-        <button type="button" class="mw-act" onclick={open_local} title={t(`mobile.action_open_local`)}>⬆</button>
-        <button type="button" class="mw-act" onclick={() => (db_visible = true)} title={t(`mobile.action_import_database`)}>🗄</button>
+        <button type="button" class="mw-act" onclick={open_local} title={t(`mobile.action_open_local`)}>
+          <Icon icon="Upload" />
+          <span class="mw-act-label">{t(`mobile.action_open_local_short`)}</span>
+        </button>
+        <button type="button" class="mw-act" onclick={() => (db_visible = true)} title={t(`mobile.action_import_database`)}>
+          <Icon icon="Database" />
+          <span class="mw-act-label">{t(`mobile.action_import_database_short`)}</span>
+        </button>
         {#if can_save}
-          <button type="button" class="mw-act save" onclick={save} title={t(`mobile.action_save_structure`)}>💾</button>
+          <button type="button" class="mw-act save" onclick={save} title={t(`mobile.action_save_structure`)}>
+            <Icon icon="Download" />
+            <span class="mw-act-label">{t(`mobile.action_save_structure_short`)}</span>
+          </button>
         {/if}
         {#if session_id}
-          <button type="button" class="mw-act disconnect" onclick={disconnect} title={t(`mobile.action_disconnect`)}>⏏</button>
+          <button type="button" class="mw-act disconnect" onclick={disconnect} title={t(`mobile.action_disconnect`)}>
+            <Icon icon="Close" />
+            <span class="mw-act-label">{t(`mobile.action_disconnect_short`)}</span>
+          </button>
         {/if}
       </div>
     </header>
@@ -472,6 +488,22 @@
     display: flex;
     gap: 4px;
   }
+  /* Tabs stay put; the action group may shrink and scroll horizontally so its
+     buttons (up to 6 when connected) never hard-clip on a narrow screen — worst
+     case they become swipeable instead of cut off. */
+  .mw-tabs {
+    flex-shrink: 0;
+  }
+  .mw-actions {
+    gap: 2px;
+    flex-shrink: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .mw-actions::-webkit-scrollbar {
+    display: none;
+  }
   .mw-tabs button,
   .mw-act {
     min-width: 40px;
@@ -482,6 +514,26 @@
     border: 1px solid transparent;
     border-radius: 8px;
     cursor: pointer;
+  }
+  /* Action buttons: SVG icon stacked over a short text label. The icon sizes
+     off the button's font-size (Icon.svelte uses width: 1em); the label sets
+     its own smaller size. Both inherit `color`, so .save/.disconnect tints
+     flow through to the SVG via fill="currentColor". */
+  .mw-act {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 2px 4px;
+    line-height: 1;
+    min-width: 34px;
+    flex-shrink: 0; /* keep button size; the group scrolls instead of squashing */
+  }
+  .mw-act-label {
+    font-size: 8px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
   }
   .mw-tabs button.active {
     color: var(--accent-color, #3b82f6);
@@ -525,6 +577,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+    position: relative; /* containing block for the kept-warm structure pane */
   }
   .mw-body.split-h {
     flex-direction: row;
@@ -542,6 +595,20 @@
   /* Kept mounted but hidden (preserves the terminal PTY/cwd across layouts). */
   .mw-pane.hidden {
     display: none;
+  }
+  /* The 3D viewer's <canvas> blanks if it ever hits display:none on iOS: while
+     hidden it measures 0×0, and on return the size doesn't reliably restore, so
+     the renderer can paint once at 0×0 and never recover (intermittent blank
+     structure after visiting the terminal). Keep the structure pane laid out at
+     full size — just visually hidden behind the active pane — so its canvas
+     never zeroes. (Render-on-demand means no real battery cost while parked.) */
+  .mw-pane.mw-struct.hidden {
+    display: flex;
+    visibility: hidden;
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: -1;
   }
   /* The editor's root (.structure-main) defaults to height:500px via
      --struct-height; override it so it fills the pane (no black gap / clipping

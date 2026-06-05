@@ -27,6 +27,12 @@ const mobile: Record<string, string> = {
   action_import_database: `Import from database`,
   action_save_structure:  `Save structure`,
   action_disconnect:      `Disconnect`,
+  // Short labels shown under the top-bar action icons (keep them ~8 chars).
+  action_remote_files_short:    `Files`,
+  action_open_local_short:      `Open`,
+  action_import_database_short: `Database`,
+  action_save_structure_short:  `Save`,
+  action_disconnect_short:      `Leave`,
 
   // ── Structure pane (MobileWorkspace) ─────────────────────────────────
   no_structure_loaded:    `No structure loaded.`,
