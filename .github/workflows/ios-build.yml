@@ -95,13 +95,33 @@ jobs:
             echo "::warning::No iOS Info.plist found under src-tauri/gen/apple"
           fi
 
-      - name: Debug signing inputs
+      - name: Configure manual code signing
+        # Tauri's generated project.yml has the right bundle id (org.catgo.app via
+        # --config) but NO signing settings, so the target defaults to automatic
+        # signing with no profile → "requires a provisioning profile". Inject manual
+        # signing into the target's settings and regenerate the Xcode project with
+        # xcodegen. PROVISIONING_PROFILE_SPECIFIER is the profile's name; Tauri
+        # installs that profile from IOS_MOBILE_PROVISION during the build step.
         if: ${{ inputs.signed }}
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
         run: |
-          echo "=== gen/apple tree (top) ===" ; ls -la src-tauri/gen/apple || true
-          echo "=== project.yml signing/bundle lines ===" ; grep -niE "PRODUCT_BUNDLE_IDENTIFIER|bundleIdPrefix|CODE_SIGN|PROVISIONING|DEVELOPMENT_TEAM|com\.catgo|org\.catgo" src-tauri/gen/apple/project.yml 2>/dev/null || echo "no project.yml matches"
-          echo "=== pbxproj PRODUCT_BUNDLE_IDENTIFIER ===" ; grep -RhoE "PRODUCT_BUNDLE_IDENTIFIER = [^;]+;" src-tauri/gen/apple 2>/dev/null | sort -u || echo "none"
-          echo "=== installed provisioning profiles ===" ; ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" 2>/dev/null || echo "none yet"
+          set -euo pipefail
+          cd src-tauri/gen/apple
+          awk -v team="$APPLE_DEVELOPMENT_TEAM" '
+            { print }
+            /^      PRODUCT_BUNDLE_IDENTIFIER: org\.catgo\.app/ {
+              print "      CODE_SIGN_STYLE: Manual"
+              print "      DEVELOPMENT_TEAM: " team
+              print "      PROVISIONING_PROFILE_SPECIFIER: CatGo_App_Store"
+              print "      CODE_SIGN_IDENTITY: Apple Distribution"
+            }
+          ' project.yml > project.yml.new && mv project.yml.new project.yml
+          echo "=== project.yml signing block ==="
+          grep -nE "CODE_SIGN|DEVELOPMENT_TEAM|PROVISIONING_PROFILE|PRODUCT_BUNDLE_IDENTIFIER" project.yml
+          xcodegen generate
+          echo "=== regenerated pbxproj signing ==="
+          grep -hoE "(CODE_SIGN_STYLE|PROVISIONING_PROFILE_SPECIFIER|DEVELOPMENT_TEAM|CODE_SIGN_IDENTITY) = [^;]+;" catgo.xcodeproj/project.pbxproj | sort -u
 
       # ---- Unsigned simulator smoke build (no Apple account needed) ----
       - name: Build (simulator, unsigned)
