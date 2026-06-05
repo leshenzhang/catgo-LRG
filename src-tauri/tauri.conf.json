@@ -51,7 +51,7 @@
       "minimumSystemVersion": "10.15"
     },
     "iOS": {
-      "minimumSystemVersion": "15.0"
+      "minimumSystemVersion": "17.0"
     },
     "resources": {
       "icons/document.icns": "./"
