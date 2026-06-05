@@ -45,11 +45,13 @@ if (is_dev) {
   // would otherwise reject that cross-origin — whitelist it via the env var
   // main.py reads (CATGO_ALLOWED_ORIGINS). Inherited by beforeDevCommand → python.
   if (process.env.TAURI_DEV_HOST) {
-    extra_env.CATGO_ALLOWED_ORIGINS =
-      `http://${process.env.TAURI_DEV_HOST}:${desktop_port}`
-    console.log(
-      `[tauri-dev] mobile: allow backend origin ${extra_env.CATGO_ALLOWED_ORIGINS}`,
-    )
+    const mobile_origin = `http://${process.env.TAURI_DEV_HOST}:${desktop_port}`
+    // main.py reads CATGO_ALLOWED_ORIGINS as a comma-separated list — append to any
+    // existing value rather than clobber it, so other allowed origins survive.
+    extra_env.CATGO_ALLOWED_ORIGINS = [process.env.CATGO_ALLOWED_ORIGINS, mobile_origin]
+      .filter(Boolean)
+      .join(`,`)
+    console.log(`[tauri-dev] mobile: allow backend origin ${mobile_origin}`)
   }
 
   // Desktop `tauri dev` needs its devUrl pinned to the worktree port via

@@ -37,6 +37,7 @@
 <select
   bind:value={current}
   onchange={handle_change}
+  aria-label="Language"
   {...rest}
   class="locale-control {rest.class ?? ``}"
 >

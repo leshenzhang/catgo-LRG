@@ -123,16 +123,21 @@
         const decoder = new TextDecoder()
         let gate_open = false
         let setup_scan = ``
-        const open_gate = () => {
+        const open_gate = (flush = false) => {
           if (gate_open || disposed) return
           gate_open = true
           clearTimeout(gate_timer)
+          const buffered = setup_scan
           setup_scan = ``
           try {
             term.reset()
+            // Sentinel path discards the (hidden) setup echo; the timeout fallback
+            // flushes the buffer so a shell that never emits the sentinel (e.g. fish,
+            // or a startup error) still shows its output instead of losing it.
+            if (flush && buffered) term.write(buffered)
           } catch { /* term may be disposing */ }
         }
-        const gate_timer = setTimeout(open_gate, 1500)
+        const gate_timer = setTimeout(() => open_gate(true), 1500)
 
         // Open the remote PTY; stream bytes into xterm once the gate is open.
         const ch = await transport.ptyOpen(session_id, cols, rows, (bytes) => {

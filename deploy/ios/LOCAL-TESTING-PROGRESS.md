@@ -16,9 +16,9 @@ The app runs as a live dev session loading its frontend from the Mac over the LA
 To run it again (device plugged in + unlocked + trusted):
 
 ```bash
-# from repo root, on branch feat/mobile-app-456:
-TAURI_DEV_HOST=192.168.12.236 pnpm tauri ios dev "Jenedith's phone"
-#               ^ this Mac's current LAN IP (check: ipconfig getifaddr en0)
+# from repo root:
+TAURI_DEV_HOST=<MAC_LAN_IP> pnpm tauri ios dev "<your device name>"
+#              ^ this Mac's current LAN IP (check: ipconfig getifaddr en0)
 ```
 
 That builds CatGo and launches it on the connected device. Keep this process running —
@@ -35,10 +35,10 @@ the phone loads the UI from `http://<LAN-IP>:3100` and HMR pushes edits live.
 
 2. **First launch failed: "…has not been explicitly trusted by the user" (CoreDeviceError 10002).**
    The app installs fine but iOS quarantines the first launch from an untrusted dev cert.
-   The signing cert is **`Apple Development: ijennheart@gmail.com`** (NOT the "Jenedith
-   Pascasio Personal Team" in the old notes below — automatic signing picked this identity).
+   The signing cert is whatever **`Apple Development: <your-apple-id>`** identity Xcode's
+   automatic signing picked (it may differ from your Personal Team's display name).
    **Fix (one-time per cert, on the phone):** Settings → General → VPN & Device Management →
-   tap the `ijennheart@gmail.com` profile → Trust. Then re-run the command above.
+   tap your `Apple Development: <your-apple-id>` profile → Trust. Then re-run the command above.
 
 ---
 
@@ -54,7 +54,7 @@ the phone loads the UI from `http://<LAN-IP>:3100` and HMR pushes edits live.
 | `pnpm tauri ios init` | generated `src-tauri/gen/apple/catgo.xcodeproj` |
 | Info.plist patch | `ITSAppUsesNonExemptEncryption=false` set in `src-tauri/gen/apple/catgo_iOS/Info.plist` |
 | iOS 26.5 platform | downloaded (8.5 GB) — device SDK `iphoneos26.5` + simulator runtime both present |
-| Signing | Xcode → automatic signing ON, Team = **Jenedith Pascasio (Personal Team)**, bundle id `com.catgo.app` accepted |
+| Signing | Xcode → automatic signing ON, Team = **your Personal Team**, bundle id `com.catgo.app` accepted |
 
 ## ⬜ Remaining (start here tomorrow)
 
@@ -66,7 +66,7 @@ the phone loads the UI from `http://<LAN-IP>:3100` and HMR pushes edits live.
    go green. *(Those errors are expected with no device attached — not a real problem.)*
 3. Run `pnpm tauri ios dev`.
 4. First launch on the device: **Settings → General → VPN & Device Management →
-   trust the developer cert** (the "Jenedith Pascasio" developer profile).
+   trust the developer cert** (your developer profile).
 
 ---
 
