@@ -3,6 +3,7 @@
   import { t, load_i18n_module } from '$lib/i18n/index.svelte'
   import DiagnosticsPanel from '$lib/DiagnosticsPanel.svelte'
   import { STATIC_ONLY } from '$lib/api/config'
+  import { pane_font_size_state } from '$lib/state.svelte'
 
   let show_diagnostics = $state(false)
   import { hpc_session_store, refresh_hpc_sessions, LOCAL_SESSION_ID } from '$lib/hpc-sessions.svelte'
@@ -996,7 +997,7 @@
     </button>
   </div>
 {:else}
-  <div class="sidebar" style:width="{width}px">
+  <div class="sidebar" style:width="{width}px" style:font-size="{pane_font_size_state.size}em">
     <!-- Source selector + collapse button in same row -->
     <div class="source-selector">
       <button
