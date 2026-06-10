@@ -185,7 +185,16 @@ register(
   async (input) => {
     const path = String((input.skill_path as string) ?? ``).trim().replace(/^\/+|\/+$/g, ``)
     const url = path ? `${API_BASE}/skills/${path}` : `${API_BASE}/skills/`
-    const res = await fetch(url)
+    let res: Response
+    try {
+      res = await fetch(url)
+    } catch {
+      // fetch() rejects only on network-level failure: mobile/static builds
+      // have no Python backend at API_BASE, and desktop may not have it running.
+      throw new Error(
+        `Skill guides require the CatGo backend, which is unreachable (mobile/static build, or backend not running). Proceed with your own domain knowledge instead of retrying.`,
+      )
+    }
     if (!res.ok) {
       throw new Error(`Skill fetch failed (HTTP ${res.status}). Call get_skill with no argument to list available skills.`)
     }
