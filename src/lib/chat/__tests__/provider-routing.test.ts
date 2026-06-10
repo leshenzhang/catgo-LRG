@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { is_client_direct, needs_relay, normalize_provider_base_url, relay_fetch, relay_url, RELAY_URL, requires_backend_chat } from '../provider-routing'
+import { is_client_direct, llm_fetch, needs_relay, normalize_provider_base_url, relay_fetch, relay_url, RELAY_URL, requires_backend_chat } from '../provider-routing'
 import type { ChatConfig } from '../types'
 
 // Controllable isMobile + native-fetch mocks for the mobile relay_fetch path.
@@ -87,17 +87,72 @@ describe(`relay_fetch auth-header guard (§8 C)`, () => {
     ).rejects.toThrow(/Refusing to relay/)
   })
 
-  it(`refuses an x-api-key header (object + Headers forms) to a relay host`, async () => {
+  it(`refuses an x-api-key header to a non-allowlisted relay host`, async () => {
     await expect(
-      relay_fetch(`https://api.materialsproject.org/x`, {
+      relay_fetch(`https://integrate.api.nvidia.com/v1/models`, {
         headers: { 'x-api-key': `secret` },
       }),
     ).rejects.toThrow(/Refusing to relay/)
+  })
+
+  it(`refuses an Authorization header (Headers form) even to the MP allowlisted host`, async () => {
     await expect(
       relay_fetch(`https://api.materialsproject.org/x`, {
         headers: new Headers({ Authorization: `Bearer secret` }),
       }),
     ).rejects.toThrow(/Refusing to relay/)
+  })
+
+  it(`relays an x-api-key request to api.materialsproject.org (web MP key, #147 — relay is CatGo's own Worker)`, async () => {
+    const fetch_mock = vi.fn().mockResolvedValue(new Response(`{}`, { status: 200 }))
+    vi.stubGlobal(`fetch`, fetch_mock)
+    try {
+      const url = `https://api.materialsproject.org/materials/summary/?_limit=1`
+      const resp = await relay_fetch(url, { headers: { 'X-API-KEY': `secret` } })
+      expect(resp.status).toBe(200)
+      expect(fetch_mock).toHaveBeenCalledWith(relay_url(url), expect.anything())
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it(`relays a Bearer request to integrate.api.nvidia.com (web NVIDIA models/test path)`, async () => {
+    const fetch_mock = vi.fn().mockResolvedValue(new Response(`{}`, { status: 200 }))
+    vi.stubGlobal(`fetch`, fetch_mock)
+    try {
+      const url = `https://integrate.api.nvidia.com/v1/models`
+      const resp = await relay_fetch(url, { headers: { Authorization: `Bearer secret` } })
+      expect(resp.status).toBe(200)
+      expect(fetch_mock).toHaveBeenCalledWith(relay_url(url), expect.anything())
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it(`refuses an x-api-key header to NVIDIA (only Authorization is allowlisted there)`, async () => {
+    await expect(
+      relay_fetch(`https://integrate.api.nvidia.com/v1/models`, {
+        headers: { 'x-api-key': `secret` },
+      }),
+    ).rejects.toThrow(/Refusing to relay/)
+  })
+})
+
+describe(`llm_fetch relay rewrite (web)`, () => {
+  it(`rewrites NVIDIA chat to the relay and leaves open-CORS providers direct`, async () => {
+    const fetch_mock = vi.fn().mockResolvedValue(new Response(`{}`, { status: 200 }))
+    vi.stubGlobal(`fetch`, fetch_mock)
+    try {
+      const nvidia = `https://integrate.api.nvidia.com/v1/chat/completions`
+      await llm_fetch(nvidia, { method: `POST`, headers: { Authorization: `Bearer k` } })
+      expect(fetch_mock).toHaveBeenLastCalledWith(relay_url(nvidia), expect.anything())
+
+      const deepseek = `https://api.deepseek.com/chat/completions`
+      await llm_fetch(deepseek, { method: `POST`, headers: { Authorization: `Bearer k` } })
+      expect(fetch_mock).toHaveBeenLastCalledWith(deepseek, expect.anything())
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   describe(`mobile native path`, () => {
@@ -119,11 +174,11 @@ describe(`relay_fetch auth-header guard (§8 C)`, () => {
       )
     })
 
-    it(`still refuses to relay a key when the native plugin is unavailable on mobile`, async () => {
+    it(`still refuses a non-allowlisted key when the native plugin is unavailable on mobile`, async () => {
       mobile_flag.value = true
       tauri_fetch_mock.mockRejectedValue(new Error(`plugin missing`))
       await expect(
-        relay_fetch(`https://api.materialsproject.org/x`, {
+        relay_fetch(`https://integrate.api.nvidia.com/v1/models`, {
           headers: { 'X-API-KEY': `secret` },
         }),
       ).rejects.toThrow(/Refusing to relay/)

@@ -59,20 +59,61 @@ export function requires_backend_chat(config: ChatConfig): boolean {
   }
 }
 
-/** True when `init` carries an API-key / bearer header that must NEVER transit a
- *  third-party relay (security §8 C). Case-insensitive across Headers/object/array. */
-function has_auth_header(init?: RequestInit): boolean {
-  if (!init?.headers) return false
+/** Lowercased header names from a RequestInit, across Headers/object/array forms. */
+function header_names(init?: RequestInit): string[] {
+  if (!init?.headers) return []
   const h = init.headers
   const names: string[] = h instanceof Headers
     ? [...h.keys()]
     : Array.isArray(h)
     ? h.map(([k]) => k)
     : Object.keys(h)
-  return names.some((n) => {
-    const lower = n.toLowerCase()
-    return lower === `authorization` || lower === `x-api-key`
-  })
+  return names.map((n) => n.toLowerCase())
+}
+
+/** Hosts the relay may forward an X-API-KEY header to. The relay is CatGo's
+ *  OWN Cloudflare Worker (workers/cors-relay — target-host allowlisted, fixed
+ *  forward-header list), not an arbitrary third party. The Materials Project
+ *  key must transit it in the STATIC_ONLY web build because
+ *  api.materialsproject.org blocks browser CORS (#147). */
+const RELAY_KEY_ALLOWED_HOSTS = new Set<string>([`api.materialsproject.org`])
+
+/** Hosts the relay may forward an Authorization (Bearer) header to. NVIDIA's
+ *  OpenAI-compatible endpoint blocks browser CORS, so the web build can only
+ *  reach it through the relay — chat/models/test requests included. Keep this
+ *  list minimal: every entry sends that provider's key through the (CatGo-
+ *  owned) Worker. All other LLM hosts allow browser CORS and stay direct. */
+const RELAY_AUTH_ALLOWED_HOSTS = new Set<string>([`integrate.api.nvidia.com`])
+
+/** True when the relay is allowed to carry `url`'s credential headers (the
+ *  host is credential-allowlisted for the header type in question). */
+function relay_credential_allowed(url: string, init?: RequestInit): boolean {
+  let host: string
+  try {
+    host = new URL(url).host
+  } catch {
+    return false
+  }
+  const names = header_names(init)
+  if (names.includes(`authorization`) && !RELAY_AUTH_ALLOWED_HOSTS.has(host)) {
+    return false
+  }
+  if (names.includes(`x-api-key`) && !RELAY_KEY_ALLOWED_HOSTS.has(host)) {
+    return false
+  }
+  return true
+}
+
+/** True when relaying `url` with `init`'s headers would hand the relay a
+ *  credential that must not transit it (security §8 C): an Authorization or
+ *  X-API-KEY header for a host outside its respective allowlist. */
+function refuses_relay(url: string, init?: RequestInit): boolean {
+  if (!needs_relay(url)) return false
+  const names = header_names(init)
+  if (!names.includes(`authorization`) && !names.includes(`x-api-key`)) {
+    return false
+  }
+  return !relay_credential_allowed(url, init)
 }
 
 /** A fetch wrapper that transparently routes CORS-blocked hosts via the relay. */
@@ -95,11 +136,11 @@ export async function relay_fetch(url: string, init?: RequestInit): Promise<Resp
       // which is still protected by the auth-header guard below.
     }
   }
-  // SECURITY (§8 C): the relay is a third party. NEVER hand it a request that
-  // carries the user's API key. Key-bearing chat requests must use llm_fetch
-  // (native, no relay) — this guard is defense-in-depth against an accidental
-  // key-bearing relay_fetch caller.
-  if (has_auth_header(init) && needs_relay(url)) {
+  // SECURITY (§8 C): never hand the relay a credential it must not carry —
+  // any Authorization header (LLM keys use llm_fetch: native, no relay), or
+  // an X-API-KEY outside the explicit RELAY_KEY_ALLOWED_HOSTS allowlist.
+  // This guard is defense-in-depth against an accidental key-bearing caller.
+  if (refuses_relay(url, init)) {
     throw new Error(
       `Refusing to relay a request carrying an Authorization/x-api-key header`,
     )
@@ -109,13 +150,19 @@ export async function relay_fetch(url: string, init?: RequestInit): Promise<Resp
 
 /** Key-bearing LLM fetch. On mobile it goes through the Tauri HTTP plugin
  *  (native Rust fetch, no browser CORS) and THROWS on failure — there is NO
- *  relay fallback because the request carries the user's API key and the relay
- *  is a third party (security §8 C). On desktop it is a plain `fetch`. */
+ *  relay fallback because the request carries the user's API key (security
+ *  §8 C). In the browser it is a plain `fetch`, except for CORS-blocked LLM
+ *  hosts whose credential the relay is explicitly allowed to carry (NVIDIA,
+ *  RELAY_AUTH_ALLOWED_HOSTS) — those are rewritten to the CatGo-owned relay,
+ *  which is the only way the web build can reach them at all. */
 export async function llm_fetch(url: string, init?: RequestInit): Promise<Response> {
   if (isMobile()) {
     // No try/relay fallback: surface the error instead of leaking the key.
     const { fetch: tauriFetch } = await import(`@tauri-apps/plugin-http`)
     return tauriFetch(url, init)
+  }
+  if (needs_relay(url) && relay_credential_allowed(url, init)) {
+    return fetch(relay_url(url), init)
   }
   return fetch(url, init)
 }
