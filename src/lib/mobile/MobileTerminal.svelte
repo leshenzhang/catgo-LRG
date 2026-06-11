@@ -257,9 +257,11 @@
         term.onData((data: string) => {
           if (disposed || !channel_id) return
           let out = data
-          if (kb_ctrl_armed && data.length === 1) {
+          if (kb_ctrl_armed) {
+            // Disarm on ANY input: a predictive-keyboard burst (length > 1)
+            // must not leave Ctrl stuck armed for a later keystroke.
             kb_ctrl_armed = false
-            const ctl = to_control(data)
+            const ctl = data.length === 1 ? to_control(data) : null
             if (ctl !== null) out = ctl
           }
           transport
@@ -345,10 +347,25 @@
         transport.ptyWrite(session_id, ch, encoder.encode(osc7_setup)).catch(() => {})
 
         // Selection = copy: in a touch UI there's no right-click/Ctrl-C, so push
-        // any non-empty selection straight to the clipboard.
+        // any non-empty selection straight to the clipboard. navigator.clipboard
+        // silently rejects in the Android/iOS WebView (a selection change is not
+        // a user gesture there) — use the native Tauri clipboard when available.
         term.onSelectionChange(() => {
           const sel = term.getSelection()
-          if (sel) navigator.clipboard?.writeText(sel).catch(() => {})
+          if (!sel) return
+          void (async () => {
+            try {
+              const { check_tauri } = await import(`$lib/io/tauri`)
+              if (check_tauri()) {
+                const { writeText } = await import(`@tauri-apps/plugin-clipboard-manager`)
+                await writeText(sel)
+                return
+              }
+            } catch {
+              /* fall through to the web clipboard */
+            }
+            navigator.clipboard?.writeText(sel).catch(() => {})
+          })()
         })
 
         // Focus the hidden textarea so the soft keyboard appears.
