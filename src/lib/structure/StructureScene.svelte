@@ -45,6 +45,8 @@
     Mesh.prototype.raycast = acceleratedRaycast
   }
   import { type BondingStrategy, compute_bond_transform, get_bond_key } from './bonding'
+  import { compute_bonds_sync } from './workers/bond-worker-api'
+  import { apply_bond_distance_rules } from './bond-distance-rules'
   import type { BondKind } from './bonding/bond-manager.svelte'
   import { BOND_KIND } from './bonding/bond-manager.svelte'
   import { BondManager } from './bonding/bond-manager.svelte'
@@ -74,7 +76,7 @@
   import { get_orig_site_idx, type AtomPropertyColors } from './atom-properties'
   import CoordinationPolyhedra from './CoordinationPolyhedra.svelte'
   import {
-    compute_polyhedra_fast,
+    compute_polyhedra_from_bonds,
     merge_polyhedra_geometry,
     get_polyhedra_hidden_atoms,
     get_polyhedra_hidden_bond_keys,
@@ -616,7 +618,6 @@
     polyhedra_min_coordination = 3,
     polyhedra_max_neighbors = 8,
     polyhedra_metals_only = true,
-    polyhedra_cutoff = 3.5,
     polyhedra_color_mode = `vertex` as import('$lib/settings').PolyhedraColorMode,
     polyhedra_color = `#4a90d9`,
     polyhedra_show_edges = true,
@@ -869,7 +870,6 @@
     polyhedra_min_coordination?: number
     polyhedra_max_neighbors?: number
     polyhedra_metals_only?: boolean
-    polyhedra_cutoff?: number
     polyhedra_color_mode?: import('$lib/settings').PolyhedraColorMode
     polyhedra_color?: string
     polyhedra_show_edges?: boolean
@@ -2590,18 +2590,81 @@
     return out
   })
 
-  // --- Polyhedra computation (fast distance cutoff + electronegativity filter) ---
+  // --- Polyhedra computation (bond-graph: uses filtered_bond_pairs) ---
   let polyhedra_data = $derived.by(() => {
     if (!show_polyhedra || !structure?.sites) return []
     try {
-      return compute_polyhedra_fast(
-        structure, polyhedra_center_elements ?? [], polyhedra_min_coordination ?? 3,
-        polyhedra_metals_only ?? true, polyhedra_cutoff ?? 3.5, polyhedra_max_neighbors ?? 8,
+      // Compute on the UNIT-CELL structure only. When image atoms are shown,
+      // `structure.sites` is expanded with boundary image copies appended after
+      // `num_original_sites`; feeding those to the bond graph double-counts each
+      // vertex (a center bonds to both the original neighbour and its coincident
+      // image-atom site), producing duplicate coincident vertices that degenerate
+      // the convex hull into a half-shell. PBC closure across cell boundaries is
+      // already handled by the bond jimage shift, and image-atom polyhedra are
+      // added separately in `polyhedra_data_with_images`.
+      const base_structure =
+        num_original_sites !== undefined && num_original_sites < structure.sites.length
+          ? { ...structure, sites: structure.sites.slice(0, num_original_sites) }
+          : structure
+      // Polyhedra need coordination-complete bonds, independent of the user's
+      // render bond mode (solid_angle under-coordinates octahedra). Compute
+      // atom_radii bonds (PBC-aware via WASM) just for polyhedra; fall back to
+      // the rendered bonds if the sync path is unavailable (large cell / no WASM).
+      const poly_bonds_raw = compute_bonds_sync(base_structure, `atom_radii`, {}) ??
+        visible_bond_pairs
+      // Honour per-pair distance rules in polyhedra too, so a ruled pair's
+      // coordination shell matches the rendered bonds (generate + filter).
+      const base_lat_m = (base_structure as { lattice?: { matrix?: unknown } }).lattice?.matrix
+      const base_lat = (Array.isArray(base_lat_m) && base_lat_m.length === 3)
+        ? base_lat_m as [Vec3, Vec3, Vec3]
+        : null
+      const poly_bonds = apply_bond_distance_rules(
+        base_structure, base_lat, poly_bonds_raw, bond_distance_rules ?? [],
       )
+      return compute_polyhedra_from_bonds(base_structure, poly_bonds, {
+        center_elements: polyhedra_center_elements ?? [],
+        min_coordination: polyhedra_min_coordination ?? 4,
+        max_neighbors: polyhedra_max_neighbors ?? 8,
+        metals_only: polyhedra_metals_only ?? false,
+      })
     } catch (err) {
       console.warn(`[CatGo] Polyhedra computation failed:`, err)
       return []
     }
+  })
+
+  // Extend unit-cell polyhedra with copies for rendered image atoms.
+  // Hidden-atom/bond derivations stay on `polyhedra_data` (unit-cell only) so
+  // the same center_idx is not processed twice there. Only the geometry
+  // consumer (merge_polyhedra_geometry) needs the extended list.
+  let polyhedra_data_with_images = $derived.by((): PolyhedronData[] => {
+    if (!show_polyhedra || !show_image_atoms || !polyhedra_data.length) return polyhedra_data
+    const layout = image_atom_layout
+    if (!layout.n_image_atoms) return polyhedra_data
+    const mat = lattice?.matrix
+    if (!mat) return polyhedra_data
+    const center_set = new Set(polyhedra_data.map((p) => p.center_idx))
+    const extras: PolyhedronData[] = []
+    for (let img = 0; img < layout.n_image_atoms; img++) {
+      const orig_idx = layout.orig_site_indices[img]
+      if (!center_set.has(orig_idx)) continue
+      const jx = layout.jimage_offsets[img * 3]
+      const jy = layout.jimage_offsets[img * 3 + 1]
+      const jz = layout.jimage_offsets[img * 3 + 2]
+      // shift = jx*row0 + jy*row1 + jz*row2
+      const sx = jx * mat[0][0] + jy * mat[1][0] + jz * mat[2][0]
+      const sy = jx * mat[0][1] + jy * mat[1][1] + jz * mat[2][1]
+      const sz = jx * mat[0][2] + jy * mat[1][2] + jz * mat[2][2]
+      const proto = polyhedra_data.find((p) => p.center_idx === orig_idx)!
+      extras.push({
+        center_idx: proto.center_idx,
+        center_element: proto.center_element,
+        neighbor_indices: proto.neighbor_indices,
+        vertices: proto.vertices.map(([vx, vy, vz]) => [vx + sx, vy + sy, vz + sz]),
+      })
+    }
+    if (!extras.length) return polyhedra_data
+    return [...polyhedra_data, ...extras]
   })
 
   const EMPTY_POLYHEDRA_GEOM: MergedPolyhedraGeometry = {
@@ -2623,7 +2686,7 @@
   }
 
   let polyhedra_geometry = $derived.by(() => {
-    if (!polyhedra_data.length) return EMPTY_POLYHEDRA_GEOM
+    if (!polyhedra_data_with_images.length) return EMPTY_POLYHEDRA_GEOM
     // Resolve each hull corner's color per the active color mode. neighbor_indices
     // is parallel to vertices; -1 marks a PBC image -> fall back to the center color.
     const get_vertex_color = (poly: PolyhedronData, vertex_local_idx: number): string => {
@@ -2633,7 +2696,7 @@
       return site_idx >= 0 ? polyhedra_site_color(site_idx) : polyhedra_site_color(poly.center_idx)
     }
     try {
-      return merge_polyhedra_geometry(polyhedra_data, get_vertex_color)
+      return merge_polyhedra_geometry(polyhedra_data_with_images, get_vertex_color)
     } catch (err) {
       console.warn(`[CatGo] Polyhedra geometry merge failed:`, err)
       return EMPTY_POLYHEDRA_GEOM
@@ -2825,7 +2888,7 @@
   // Track which bonds are manual (for visual feedback)
   let manual_bond_keys = $derived.by(() => new Set(manual_bonds.map(b => get_bond_key(b.site_idx_1, b.site_idx_2))))
 
-  let filtered_bond_pairs = $derived.by(() => {
+  let visible_bond_pairs = $derived.by(() => {
     // Use last_bond_structure for site lookups — bond indices reference the
     // structure bonds were computed against. This also avoids a redundant
     // cascade (filtered → instanced → GPU) every time structure changes.
@@ -2851,12 +2914,17 @@
     const _rules_len = bond_distance_rules?.length ?? 0
     const _deleted_size = _deleted_bond_keys.size
 
-    // Build element-pair distance rule lookup map
-    const rule_map = new Map<string, { min: number; max: number }>()
-    for (const r of bond_distance_rules ?? []) {
-      const key = [r.element_1, r.element_2].sort().join(`-`)
-      rule_map.set(key, { min: r.min_dist, max: r.max_dist })
-    }
+    // Apply per-element-pair distance rules. For a ruled pair this REPLACES the
+    // strategy bonds with every PBC pair within [min,max] (so it both removes
+    // over-long bonds and ADDS missing in-range bonds the strategy didn't find);
+    // pairs without a rule keep their strategy bonds untouched.
+    const lat_m = (bond_struct as { lattice?: { matrix?: unknown } }).lattice?.matrix
+    const lat_matrix = (Array.isArray(lat_m) && lat_m.length === 3)
+      ? lat_m as [Vec3, Vec3, Vec3]
+      : null
+    const ruled_bonds = apply_bond_distance_rules(
+      bond_struct, lat_matrix, bond_pairs, bond_distance_rules ?? [],
+    )
 
     const is_site_visible = (site_idx: number) => {
       const site = bond_struct.sites[site_idx]
@@ -2870,8 +2938,8 @@
       return has_visible_element && prop_visible
     }
 
-    // Start with auto-detected bonds, filter out deleted, hidden, and invalid transforms
-    let result = bond_pairs.filter((bond) => {
+    // Start from the rule-aware bonds; filter out deleted, hidden, and invalid transforms
+    let result = ruled_bonds.filter((bond) => {
       if (!bond.transform_matrix || bond.transform_matrix.some((v) => !Number.isFinite(v))) return false
       // Hard cap on rendered bond length. No real covalent bond exceeds this;
       // anything longer is a PBC/image rendering artifact (e.g. a bond drawn
@@ -2880,16 +2948,6 @@
       const key = get_bond_key(bond.site_idx_1, bond.site_idx_2)
       if (_deleted_bond_keys.has(key)) return false
       if (!is_site_visible(bond.site_idx_1) || !is_site_visible(bond.site_idx_2)) return false
-      // Per-element-pair distance rule filtering
-      if (rule_map.size > 0) {
-        const el1 = bond_struct.sites[bond.site_idx_1]?.species[0]?.element
-        const el2 = bond_struct.sites[bond.site_idx_2]?.species[0]?.element
-        if (el1 && el2) {
-          const pair_key = [el1, el2].sort().join(`-`)
-          const rule = rule_map.get(pair_key)
-          if (rule && (bond.bond_length < rule.min || bond.bond_length > rule.max)) return false
-        }
-      }
       return true
     })
 
@@ -2915,6 +2973,16 @@
       })
     }
 
+    return result
+  })
+
+  // Bonds as actually rendered: visible_bond_pairs minus polyhedra-internal bonds
+  // (the polyhedron face covers them) and sphere-clip culling. Kept DOWNSTREAM of
+  // visible_bond_pairs so polyhedra_data (which consumes visible_bond_pairs) does
+  // NOT depend on polyhedra_hidden_bond_keys — that closes a derived cycle
+  // (polyhedra_data → bonds → polyhedra_hidden_bond_keys → polyhedra_data).
+  let filtered_bond_pairs = $derived.by(() => {
+    let result = visible_bond_pairs
     // Filter bonds hidden by polyhedra
     if (polyhedra_hidden_bond_keys.size > 0) {
       result = result.filter((bond) => {
@@ -2922,7 +2990,6 @@
         return !polyhedra_hidden_bond_keys.has(key)
       })
     }
-
     // Filter bonds outside sphere clipping radius
     if (clip_active && effective_clip_center && structure?.sites) {
       const r2 = clip_radius * clip_radius
@@ -2936,7 +3003,6 @@
       // Hide bonds where BOTH endpoints are outside the clip radius
       result = result.filter((bond) => is_inside(bond.site_idx_1) || is_inside(bond.site_idx_2))
     }
-
     return result
   })
 

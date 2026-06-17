@@ -132,7 +132,7 @@ export const SETTINGS_CONFIG: SettingsConfig = {
         `Suppress cross-cell bond stubs whose partner image atom is not drawn (matches Materials Project / VESTA defaults)`,
     },
     bonding_strategy: {
-      value: `solid_angle`,
+      value: `atom_radii`,
       description: `Method for determining bonds between atoms`,
       enum: {
         electroneg_ratio: `Electronegativity Ratio`,
@@ -506,12 +506,6 @@ export const SETTINGS_CONFIG: SettingsConfig = {
       value: true,
       description:
         `Only show polyhedra around metal atoms (uncheck to include non-metals)`,
-    },
-    polyhedra_cutoff: {
-      value: 3.5,
-      description: `Maximum bond length for polyhedra neighbor search (Å)`,
-      minimum: 1.5,
-      maximum: 6.0,
     },
     polyhedra_color_mode: {
       value: `vertex` as const,
