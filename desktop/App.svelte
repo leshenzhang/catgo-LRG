@@ -2163,6 +2163,36 @@
                 handle_sidebar_open_workflow(workflow_id)
               }}
               on_open_in_molstar={() => toggle_pane_viewer(pane)}
+              on_view_split_request={(struct) => {
+                // Docked-chat "新pane": open CatBot's loaded structure (B) in a
+                // NEW TAB, leaving this tab's viewer (A) untouched. A new tab gets
+                // its own tab.id = its own panel_id, so the two structures don't
+                // fight over a shared panel store — panes WITHIN one tab share
+                // tab.id and would clobber each other (each pane's MCP bridge
+                // pushes to the same panel, and the sibling's push gets applied).
+                if (!struct?.sites?.length) return
+                const prev_tab_id = tm.active_tab_id
+                tm.create_tab(`structure`)
+                const new_tab_id = tm.active_tab_id
+                const nts = tm.tab_states[new_tab_id]
+                if (!nts) return
+                const nleaf = leaves(nts.root)[0]
+                const np = nleaf ? structurePane(nleaf) : null
+                if (!np) return
+                // Guard: 12-tab limit didn't open a new tab → don't clobber.
+                if (new_tab_id === prev_tab_id && np.structure) {
+                  console.warn(`[App] Tab limit reached, cannot open structure in new tab`)
+                  return
+                }
+                np.initial_panel = undefined
+                np.structure = clone_structure(struct)
+                np.initial_site_count = struct.sites.length
+                np.initial_structure_ref = struct
+                np.modified = false
+                const ntab = tm.tabs.find(t => t.id === new_tab_id)
+                if (ntab) ntab.label = `CatBot structure`
+                tm.update_tab_label(new_tab_id)
+              }}
               fullscreen_toggle={false}
               allow_file_drop={false}
               show_controls={true}
@@ -2199,17 +2229,10 @@
                   Object.assign(pane, create_empty_pane())
                   update_tab_label(tab.id)
                 }}
-                on_view_split={async () => {
+                on_view_split={(_panelId, struct) => {
                   // Split this chat leaf into: left = 3D structure viewer with
-                  // the structure CatBot just loaded (pulled from the panel
-                  // store), right = the chat (history kept — keyed by tab id).
-                  let struct: AnyStructure | null = null
-                  try {
-                    const r = await fetch(
-                      `${API_BASE}/view/structure/current?panel_id=${encodeURIComponent(tab.id)}`,
-                    )
-                    if (r.ok) struct = await r.json()
-                  } catch { /* ignore */ }
+                  // the structure CatBot just loaded (carried in the load card),
+                  // right = the chat (history kept — keyed by tab id).
                   const res = splitLeaf(ts.root, leaf.id, `h`)
                   if (!res) return
                   ts.root = res.root
@@ -2230,17 +2253,24 @@
                   ts.active_leaf_id = res.newLeafId
                   update_tab_label(tab.id)
                 }}
-                on_view_new_window={async () => {
+                on_view_new_window={async (_panelId, struct) => {
                   try {
-                    const r = await fetch(
-                      `${API_BASE}/view/structure/current?panel_id=${encodeURIComponent(tab.id)}`,
-                    )
-                    if (!r.ok) return
-                    const struct = await r.json()
-                    await open_structure_in_new_window(struct, `CatBot structure`, is_tauri)
+                    if (struct?.sites?.length) {
+                      await open_structure_in_new_window(struct, `CatBot structure`, is_tauri)
+                    }
                   } catch (e) {
                     console.warn(`[CatGo] open structure window failed:`, e)
                   }
+                }}
+                has_sibling_structure={leaves(ts.root).some(l => { if (l.id === leaf.id) return false; const p = structurePane(l); return !!p && pane_has_content(p) })}
+                on_view_overwrite={(_panelId, struct) => {
+                  // Overwrite the FIRST content-bearing sibling structure leaf
+                  // with the structure CatBot just loaded for this tab (carried
+                  // in the load card).
+                  if (!struct?.sites?.length) return
+                  const target = leaves(ts.root).find(l => { if (l.id === leaf.id) return false; const p = structurePane(l); return !!p && pane_has_content(p) })
+                  const tp = target ? structurePane(target) : null
+                  if (tp) { tp.structure = clone_structure(struct); tp.modified = false }
                 }}
               />
             </div>
