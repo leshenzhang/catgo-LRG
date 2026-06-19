@@ -58,11 +58,22 @@ async function get_pipeline(
       const isolated = typeof globalThis !== `undefined`
         && (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated === true
       const cores = (typeof navigator !== `undefined` && navigator.hardwareConcurrency) || 4
+      // WebKit engines (WebKitGTK on Linux Tauri, WKWebView on macOS/iOS) deadlock
+      // on multi-threaded wasm: the SharedArrayBuffer pthread sync hangs and the
+      // inference call never returns → permanent UI freeze (needs app restart).
+      // Chromium (web, Windows WebView2) and Firefox run multi-threaded fine. The
+      // Chromium UA also contains "AppleWebKit", so a true WebKit engine is one
+      // whose UA has AppleWebKit but NOT Chrome/Chromium/Edg. Force single-thread
+      // there (slower but does not hang).
+      const ua = typeof navigator !== `undefined` ? navigator.userAgent : ``
+      const is_webkit = /AppleWebKit/.test(ua) && !/Chrome|Chromium|Edg\//.test(ua)
       // Use most cores but leave ~2 for the audio worklet / VAD / UI, and cap at
       // 8 — beyond that wasm Whisper is memory-bandwidth bound and thread-sync
       // overhead eats the gains (16 threads ≠ 2× of 8). Single thread without
-      // cross-origin isolation (no SharedArrayBuffer).
-      env.backends.onnx.wasm.numThreads = isolated ? Math.max(1, Math.min(8, cores - 2)) : 1
+      // cross-origin isolation (no SharedArrayBuffer) or on a WebKit engine.
+      env.backends.onnx.wasm.numThreads = (isolated && !is_webkit)
+        ? Math.max(1, Math.min(8, cores - 2))
+        : 1
       // Load the onnxruntime-web wasm runtime from a CDN pinned to the version
       // @huggingface/transformers bundles. Without this, the WASM backend (the
       // fallback when WebGPU is unavailable — e.g. machines without a discrete

@@ -26,6 +26,10 @@ export interface VadConfig {
 let vad_instance: any = null
 
 export async function start_vad(config: VadConfig): Promise<void> {
+  // Tear down any previous instance first — MicVAD holds the mic and a worklet,
+  // so a leaked instance keeps transcribing in parallel (duplicated input). One
+  // mic, one VAD.
+  stop_vad()
   // Dynamic import to avoid SSR issues
   const { MicVAD } = await import(`@ricky0123/vad-web`)
 

@@ -178,6 +178,7 @@ _DEFERRED_ROUTER_ATTRS: list[str] = ["hpc_router"] if CATGO_THIN else [
     "quacc_router",
     "atomate2_router",
     "forcefield_router",        # ~76 ms (openbabel)
+    "stt_router",               # faster-whisper (CTranslate2) — heavy import
 ]
 
 # Light-weight import; plugin_manager.initialize() is the slow part and is
