@@ -5,6 +5,7 @@
   import { TerminalVoice } from './terminal-voice.svelte'
   import { WHISPER_MODELS } from '$lib/gesture/whisper-models'
   import { get_active_terminal } from './terminal-registry.svelte'
+  import { backend_stt_available } from '$lib/gesture/backend-whisper'
   import { fetchConnections, type ConnectionInfo } from '$lib/api/hpc'
   import { fetchAvailableShells, type ShellInfo } from '$lib/api/pty'
   import { hpc_session_store, LOCAL_SESSION_ID } from '$lib/hpc-sessions.svelte'
@@ -185,6 +186,10 @@
   // uses), with no Enter appended.
   const voice = new TerminalVoice()
   let show_voice_menu = $state(false)
+  // Whether native backend STT is reachable — decides if the menu shows the
+  // webview-only Acceleration control or the "native backend" note.
+  let stt_backend = $state(false)
+  $effect(() => { backend_stt_available().then((v) => { stt_backend = v }) })
 
   function toggle_voice() {
     voice.toggle((text) => { get_active_terminal()?.send_keys(text) })
@@ -355,16 +360,21 @@
                 onclick={() => { voice.set_language(l.tag) }}
               >{l.label}</button>
             {/each}
-            <div class="tw-dropdown-divider"></div>
-            <div class="tw-dropdown-header">Acceleration</div>
-            {#each [{ a: `cpu`, label: `CPU (稳定)` }, { a: `gpu`, label: `GPU / WebGPU (实验·更快)` }] as opt}
-              <button
-                class="tw-dropdown-item"
-                class:tw-voice-selected={voice.accel === opt.a}
-                onclick={() => { voice.set_accel(opt.a === `gpu` ? `gpu` : `cpu`) }}
-              >{opt.label}</button>
-            {/each}
-            <div class="tw-dropdown-note">中英混合：选「中文」+ 更大模型。GPU 需浏览器支持 WebGPU,出乱码就切回 CPU</div>
+            {#if stt_backend}
+              <div class="tw-dropdown-divider"></div>
+              <div class="tw-dropdown-note">原生后端转写（设备自动：CPU / CUDA）· 不占内存 · 可放心选更大模型。中英混合选「中文」+ 更大模型</div>
+            {:else}
+              <div class="tw-dropdown-divider"></div>
+              <div class="tw-dropdown-header">Acceleration</div>
+              {#each [{ a: `cpu`, label: `CPU (稳定)` }, { a: `gpu`, label: `GPU / WebGPU (实验·更快)` }] as opt}
+                <button
+                  class="tw-dropdown-item"
+                  class:tw-voice-selected={voice.accel === opt.a}
+                  onclick={() => { voice.set_accel(opt.a === `gpu` ? `gpu` : `cpu`) }}
+                >{opt.label}</button>
+              {/each}
+              <div class="tw-dropdown-note">中英混合：选「中文」+ 更大模型。GPU 需浏览器支持 WebGPU,出乱码就切回 CPU</div>
+            {/if}
             {#if voice.model_status === `downloading`}
               <div class="tw-dropdown-note">Downloading… {Math.round(voice.download_progress)}%</div>
             {:else if voice.model_status === `error` || voice.error}

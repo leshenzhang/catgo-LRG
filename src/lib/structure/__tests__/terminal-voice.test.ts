@@ -55,6 +55,33 @@ describe('TerminalVoice', () => {
     expect(tv.recording).toBe(false)
   })
 
+  it('only one voice records at a time — starting a second stops the first', async () => {
+    // Regression: two terminal panes each enabling voice spun up two MicVADs that
+    // both transcribed the same speech, duplicating injected keystrokes. Starting
+    // voice on pane B must stop pane A (single microphone → single voice).
+    const a = make_fake()
+    const b = make_fake()
+    const va = new TerminalVoice(() => a.engine)
+    const vb = new TerminalVoice(() => b.engine)
+
+    await va.toggle(() => {})
+    expect(va.recording).toBe(true)
+
+    await vb.toggle(() => {})
+    expect(vb.recording).toBe(true)
+    // A was taken over → stopped and no longer recording.
+    expect(va.recording).toBe(false)
+    expect(a.engine.stop).toHaveBeenCalled()
+
+    // A no longer receives transcripts; only B injects.
+    const sent: string[] = []
+    await vb.toggle(() => {}) // stop B to reset, then restart capturing
+    await vb.toggle((t) => sent.push(t))
+    b.fire(fake_event(`one`, true))
+    a.fire(fake_event(`one`, true)) // A is dead — must not fire
+    expect(sent).toEqual([`one `])
+  })
+
   it('reports unsupported when the engine is unsupported', () => {
     const tv = new TerminalVoice(() => ({ is_supported: false, start: vi.fn(), stop: vi.fn() }))
     expect(tv.is_supported).toBe(false)

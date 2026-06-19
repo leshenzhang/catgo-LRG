@@ -8,6 +8,7 @@
  */
 
 import { LocalWhisperEngine, type ModelStatus } from '$lib/gesture/local-whisper'
+import { backend_stt_available, BackendWhisperEngine } from '$lib/gesture/backend-whisper'
 import { DEFAULT_WHISPER_MODEL_ID } from '$lib/gesture/whisper-models'
 import type { VoiceEvent } from '$lib/gesture/gesture-types'
 
@@ -31,6 +32,13 @@ const STORAGE_KEY = `catgo-terminal-voice-model`
 const LANG_KEY = `catgo-terminal-voice-lang`
 const ACCEL_KEY = `catgo-terminal-voice-accel`
 
+// Only one terminal voice may record at a time. There is a single microphone and
+// the VAD + Whisper pipeline is a shared singleton; enabling voice on two panes
+// otherwise spins up two MicVAD instances that BOTH transcribe the same speech
+// and each inject keystrokes → duplicated input. Starting voice on any pane stops
+// it on whichever pane held it before.
+let active_voice: TerminalVoice | null = null
+
 export class TerminalVoice {
   recording = $state(false)
   model_status = $state<ModelStatus>(`idle`)
@@ -45,7 +53,9 @@ export class TerminalVoice {
   accel = $state<Accel>(`cpu`)
   error = $state<string | null>(null)
 
-  private make_engine: () => VoiceEngineLike
+  // Injected factory (tests / explicit override). When absent, the engine is
+  // chosen at start time: native backend STT when reachable, else in-browser WASM.
+  private injected_make?: () => VoiceEngineLike
   private engine: VoiceEngineLike | null = null
   // Lazy Traditional→Simplified converter. Whisper's multilingual model emits
   // Traditional Chinese for Mandarin; convert to Simplified for zh-CN. Loaded
@@ -60,12 +70,7 @@ export class TerminalVoice {
   }
 
   constructor(make_engine?: () => VoiceEngineLike) {
-    this.make_engine = make_engine
-      ?? (() =>
-        new LocalWhisperEngine((status, progress) => {
-          this.model_status = status
-          if (typeof progress === `number`) this.download_progress = progress
-        }))
+    this.injected_make = make_engine
     if (typeof localStorage !== `undefined`) {
       const saved = localStorage.getItem(STORAGE_KEY)
       if (saved) this.model_id = saved
@@ -77,13 +82,33 @@ export class TerminalVoice {
   }
 
   get is_supported(): boolean {
-    if (!this.engine) this.engine = this.make_engine()
-    return this.engine.is_supported
+    if (this.injected_make) {
+      if (!this.engine) this.engine = this.injected_make()
+      return this.engine.is_supported
+    }
+    // Both real engines only need a microphone — don't instantiate one (and
+    // commit to backend-vs-WASM) just to answer the button's disabled state.
+    return typeof navigator !== `undefined`
+      && !!navigator.mediaDevices?.getUserMedia
+  }
+
+  /** Pick the STT engine: native backend (faster-whisper) when the server is
+   *  reachable, else the in-browser WASM engine. Injected factory wins (tests). */
+  private async create_engine(): Promise<VoiceEngineLike> {
+    if (this.injected_make) return this.injected_make()
+    if (await backend_stt_available()) return new BackendWhisperEngine()
+    return new LocalWhisperEngine((status, progress) => {
+      this.model_status = status
+      if (typeof progress === `number`) this.download_progress = progress
+    })
   }
 
   set_model(id: string): void {
     this.model_id = id
     if (typeof localStorage !== `undefined`) localStorage.setItem(STORAGE_KEY, id)
+    // Apply live so a mid-session model switch takes effect on the next utterance
+    // (the backend engine reads model_id per request; no restart needed).
+    ;(this.engine as { set_model?: (id: string) => void } | null)?.set_model?.(id)
   }
 
   set_language(lang: string): void {
@@ -105,7 +130,7 @@ export class TerminalVoice {
       return
     }
     this.error = null
-    if (!this.engine) this.engine = this.make_engine()
+    if (!this.engine) this.engine = await this.create_engine()
 
     const on_event = async (e: VoiceEvent) => {
       if (!e.is_final) return
@@ -123,6 +148,10 @@ export class TerminalVoice {
       this.error = err
       this.recording = false
     }
+
+    // Single global voice: stop whichever pane was recording before taking over.
+    if (active_voice && active_voice !== this) active_voice.stop()
+    active_voice = this
 
     this.recording = true
     try {
@@ -143,5 +172,6 @@ export class TerminalVoice {
   stop(): void {
     this.recording = false
     this.engine?.stop()
+    if (active_voice === this) active_voice = null
   }
 }
