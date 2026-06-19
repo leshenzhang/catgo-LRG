@@ -1403,6 +1403,8 @@
     axis_line_width: 1,
     tick_length: 5,
     tick_width: 1,
+    title_size: 14,
+    font_size: 12,
     legend_visible: true,
     hidden_series: [],
   })
@@ -1432,6 +1434,8 @@
     axis_line_width: 1,
     tick_length: 5,
     tick_width: 1,
+    title_size: 14,
+    font_size: 12,
     legend_visible: true,
   })
   let band_layout = $state<`horizontal` | `vertical`>(`horizontal`)
@@ -1459,6 +1463,8 @@
     axis_line_width: 1,
     tick_length: 5,
     tick_width: 1,
+    title_size: 14,
+    font_size: 12,
     legend_visible: true,
     hidden_series: [],
     line_styles: {},
@@ -1510,6 +1516,7 @@
         const filename = `${base_name}_data.csv`
         download(csv, filename, `text/csv;charset=utf-8`)
         set_status(t(`structure.export_started`, { filename }))
+        setTimeout(() => set_status(null), 4000)
         return
       }
 
@@ -1521,6 +1528,7 @@
       const filename = `${base_name}_plot.${format}`
       download(await data_url_to_blob(url), filename, format === `svg` ? `image/svg+xml` : `image/png`)
       set_status(t(`structure.export_started`, { filename }))
+      setTimeout(() => set_status(null), 4000)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       set_status(t(`structure.export_failed`, { what: format.toUpperCase(), message }))
@@ -4888,6 +4896,8 @@
           axis_line_width={dos_state.axis_line_width}
           tick_length={dos_state.tick_length}
           tick_width={dos_state.tick_width}
+          title_size={dos_state.title_size}
+          font_size={dos_state.font_size}
           legend_visible={dos_state.legend_visible}
           hidden_series={dos_state.hidden_series}
         />
@@ -4996,6 +5006,8 @@
           axis_line_width={cohp_state.axis_line_width}
           tick_length={cohp_state.tick_length}
           tick_width={cohp_state.tick_width}
+          title_size={cohp_state.title_size}
+          font_size={cohp_state.font_size}
           legend_visible={cohp_state.legend_visible}
           hidden_series={cohp_state.hidden_series}
         />
@@ -5050,6 +5062,8 @@
           axis_line_width={band_state.axis_line_width}
           tick_length={band_state.tick_length}
           tick_width={band_state.tick_width}
+          title_size={band_state.title_size}
+          font_size={band_state.font_size}
           legend_visible={band_state.legend_visible}
         />
       </div>
@@ -5289,10 +5303,12 @@
   }
   .dos-layout-btn, .dos-export-btn, .dos-close-btn {
     padding: 2px 6px;
-    background: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.08));
-    border: 1px solid light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.12));
+    background: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.08));
+    border: 1px solid light-dark(rgba(0, 0, 0, 0.18), rgba(255, 255, 255, 0.18));
     border-radius: 3px;
-    color: var(--struct-text-color, #ccc);
+    /* Theme-aware text so the buttons read as clickable on a light header
+       (the old flat #ccc washed out to look disabled in light mode). */
+    color: light-dark(#374151, #ccc);
     cursor: pointer;
     font-size: 0.75em;
   }
