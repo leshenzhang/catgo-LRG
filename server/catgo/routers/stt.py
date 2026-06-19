@@ -125,7 +125,19 @@ def _get_model(size: str):
             "STT loading model %s (%s/%s, cpu_threads=%s)",
             size, device, compute_type, _CPU_THREADS if device == "cpu" else "-",
         )
-        _model_cache[key] = _build_model(size, device, compute_type)
+        try:
+            _model_cache[key] = _build_model(size, device, compute_type)
+        except Exception as exc:
+            # A CUDA device was detected but the runtime (cuBLAS/cuDNN) is missing
+            # or incompatible — don't 500, fall back to CPU int8 for this and all
+            # subsequent loads.
+            if device != "cuda":
+                raise
+            logger.warning("CUDA STT load failed (%s); falling back to CPU int8", exc)
+            _device_compute = ("cpu", "int8")
+            device, compute_type = _device_compute
+            key = f"{size}:{device}"
+            _model_cache[key] = _build_model(size, device, compute_type)
     return _model_cache[key]
 
 
