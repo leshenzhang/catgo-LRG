@@ -245,6 +245,75 @@ export async function popout_terminal_session(
   window.open(url, win_id, `width=900,height=600,resizable=yes`)
 }
 
+import type { DocRef } from '$lib/viewer/doc-viewer-state.svelte'
+import { send_open_doc, on_docs_ready } from '$lib/viewer/doc-channel'
+
+/** Pre-create the documents window hidden so the first file-open is instant.
+ * Idempotent: no-op if it already exists. Main-window only (callers must guard). */
+export async function prewarm_doc_window(is_tauri: boolean) {
+  if (!is_tauri) return
+  try {
+    const { WebviewWindow } = await import(`@tauri-apps/api/webviewWindow`)
+    const existing = await WebviewWindow.getByLabel(`catgo-docs`)
+    if (existing) return
+    const url = `${window.location.origin}${window.location.pathname}#docs`
+    const win = new WebviewWindow(`catgo-docs`, {
+      title: `CatGo - Documents`,
+      url, width: 1000, height: 760, center: true, resizable: true, decorations: true,
+      visible: false,
+    })
+    win.once(`tauri://error`, () => {})
+  } catch {}
+}
+
+/**
+ * Open (or focus) the single document-viewer window and deliver a file ref.
+ * Warm path: window exists → send immediately via event.
+ * Cold path: window created → register a one-shot on_docs_ready listener that
+ * sends the ref once the window signals it is mounted, then creates the window.
+ * A 1500ms fallback re-send covers the edge case where the ready event is missed;
+ * deduplication in open_doc makes double-delivery harmless.
+ */
+export async function open_doc_window(ref: DocRef, is_tauri: boolean) {
+  const url = `${window.location.origin}${window.location.pathname}#docs`
+  if (is_tauri) {
+    try {
+      const { WebviewWindow } = await import(`@tauri-apps/api/webviewWindow`)
+      const existing = await WebviewWindow.getByLabel(`catgo-docs`)
+      if (existing) {
+        await send_open_doc(ref, true)
+        try { await existing.show() } catch {}
+        try { await existing.unminimize() } catch {}
+        try { await existing.setFocus() } catch {}
+        return
+      }
+      // Cold open: listen for the ready handshake, then create the window.
+      let off = on_docs_ready(() => {
+        off()
+        void send_open_doc(ref, true)
+      }, true)
+      const win = new WebviewWindow(`catgo-docs`, {
+        title: `CatGo - Documents`,
+        url, width: 1000, height: 760, center: true, resizable: true, decorations: true,
+      })
+      win.once(`tauri://error`, () => { window.open(url, `catgo-docs`, `width=1000,height=760,resizable=yes`) })
+      // Fallback: re-send after 1500ms in case the ready event was missed.
+      setTimeout(() => { void send_open_doc(ref, true) }, 1500)
+      return
+    } catch {}
+  }
+  // Web: open/reuse the named window and deliver via ready handshake + immediate post.
+  let off = on_docs_ready(() => {
+    off()
+    void send_open_doc(ref, false)
+  }, false)
+  const w = window.open(url, `catgo-docs`, `width=1000,height=760,resizable=yes`)
+  // Warm case: window was already open and won't re-emit ready; send directly too.
+  await send_open_doc(ref, false)
+  setTimeout(() => { void send_open_doc(ref, false) }, 1500)
+  try { w?.focus() } catch {}
+}
+
 /** Open the terminal tab in a new window. */
 export async function popout_terminal(
   is_tauri: boolean,

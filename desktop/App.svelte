@@ -19,6 +19,7 @@
   import { detect_bio } from '$lib/structure/bio/detect'
   import '$lib/theme/themes.js'
   import StatusPopout from '$lib/workflow/StatusPopout.svelte'
+  import DocViewer from '$lib/viewer/DocViewer.svelte'
   import { apply_theme_to_dom, get_theme_preference } from '$lib/theme'
   import ThemeControl from '$lib/theme/ThemeControl.svelte'
   import { readFile } from '@tauri-apps/plugin-fs'
@@ -39,7 +40,6 @@
   import OptimadePreviewModal from '$lib/structure/OptimadePreviewModal.svelte'
   import PasteContentModal from '$lib/structure/PasteContentModal.svelte'
   import MonacoEditorPanel from '$lib/structure/MonacoEditorPanel.svelte'
-  import FilePreviewPanel from '$lib/structure/FilePreviewPanel.svelte'
   import type { PymatgenStructure } from '$lib/structure'
   import { serialize_structure } from '$lib/api/project'
   import type { ProjectSummary } from '$lib/api/project'
@@ -89,6 +89,7 @@
     popout_workflow as _popout_workflow,
     popout_terminal_session as _popout_terminal_session,
     open_structure_in_new_window, parse_and_open_structure_window, open_path_in_new_window,
+    prewarm_doc_window,
     open_chat_in_new_window,
   } from './lib/popout-manager'
   // Extracted sidebar handlers
@@ -162,6 +163,7 @@
   let popout_chat_tab_id = $state(`default`)
   let popout_status_mode = $state(false)
   let popout_doping_pt_mode = $state(false)
+  let popout_docs_mode = $state(false)
   let is_loading = $state(false)
   let loading_text = $state(``)
   let drag_target_leaf = $state<string | null>(null)
@@ -214,6 +216,7 @@
     set_is_loading: (v) => { is_loading = v },
     get_open_target: () => open_target_state.value,
     open_in_window: (content, filename, reuse) => parse_and_open_structure_window(content, filename, is_tauri, reuse),
+    is_tauri,
   }
   const resize_deps_min: ResizeDepsMin = {
     tab_states,
@@ -525,6 +528,9 @@
         } else if (hash.startsWith(`#doping-pt`)) {
           popout_doping_pt_mode = true
           return
+        } else if (hash.startsWith(`#docs`)) {
+          popout_docs_mode = true
+          return
         } else if (hash.startsWith(`#workflow`)) {
           open_tab(`workflow`)
         } else if (!STATIC_ONLY && hash.startsWith(`#terminal`)) {
@@ -546,7 +552,7 @@
           if (p) handle_load_trajectory_stream(p, n, true)
         }
       })
-      if (popout_chat_mode || popout_status_mode || popout_doping_pt_mode) return
+      if (popout_chat_mode || popout_status_mode || popout_doping_pt_mode || popout_docs_mode) return
       const on_hash = () => {
         if (window.location.hash.startsWith(`#workflow`)) {
           open_tab(`workflow`)
@@ -572,6 +578,16 @@
 
   $effect(() => {
     sidebar.persist()
+  })
+
+  // Pre-warm the docs window after startup so the first file-open is near-instant.
+  // Runs only in the real main window (not any popout route).
+  $effect(() => {
+    if (!is_tauri) return
+    const h = window.location.hash
+    if (h.startsWith(`#docs`) || h.startsWith(`#chat`) || h.startsWith(`#status`) || h.startsWith(`#doping-pt`) || h.startsWith(`#terminal`) || h.startsWith(`#workflow`) || h.startsWith(`#structure`) || h.startsWith(`#openpath`)) return
+    const id = setTimeout(() => { void prewarm_doc_window(is_tauri) }, 2500)
+    return () => clearTimeout(id)
   })
 
   /** Open the current structure in the text editor for direct editing. */
@@ -1699,7 +1715,7 @@
   //
   // Skipped in popout modes and STATIC_ONLY (no backend to subscribe to).
   $effect(() => {
-    if (STATIC_ONLY || popout_chat_mode || popout_status_mode || popout_doping_pt_mode) return
+    if (STATIC_ONLY || popout_chat_mode || popout_status_mode || popout_doping_pt_mode || popout_docs_mode) return
     const es = new EventSource(`${API_BASE}/view/subscribe?panel_id=default`)
 
     function inject_into_external(struct: AnyStructure | null | undefined): boolean {
@@ -1873,6 +1889,8 @@
 <StatusPopout />
 {:else if popout_doping_pt_mode}
 <DopingPTWindow />
+{:else if popout_docs_mode}
+<DocViewer />
 {:else if is_mobile}
 <MobileWorkspace />
 {:else}
@@ -2652,30 +2670,6 @@
   </div>
 {/if}
 
-<!-- Sidebar file preview overlay (images, PDFs, markdown, csv, etc.) -->
-{#if sidebar.preview_open}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="sidebar-preview-backdrop" onclick={(e) => { if (e.target === e.currentTarget) sidebar.preview_open = false }}>
-    <div class="sidebar-editor-overlay" style="display: flex; flex-direction: column;">
-      <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid light-dark(rgba(0,0,0,0.12), rgba(255,255,255,0.1));">
-        <span style="font-weight: 500; font-size: 13px;">{sidebar.preview_filename}</span>
-        <button onclick={() => sidebar.preview_open = false} style="background: none; border: none; cursor: pointer; font-size: 16px; color: light-dark(#666, #999); padding: 2px 6px;">✕</button>
-      </div>
-      <div style="flex: 1; min-height: 0; overflow: auto;">
-        <FilePreviewPanel
-          mode={sidebar.preview_mode}
-          filename={sidebar.preview_filename}
-          content={sidebar.preview_content}
-          binary_data={sidebar.preview_binary_data}
-          mime_type={sidebar.preview_mime_type}
-          file_path={sidebar.preview_file_path}
-          session_id={sidebar.preview_session_id}
-          onclose={() => sidebar.preview_open = false}
-        />
-      </div>
-    </div>
-  </div>
-{/if}
 
 <!-- Database search modal (needs backend proxy) -->
 {#if modal.search_visible}
