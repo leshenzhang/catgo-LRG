@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import uuid
 from collections import Counter, deque
 from typing import Any
 
@@ -37,6 +39,7 @@ panel_selections: dict[str, Any] = {}
 # every supported format (xyz multi-frame, extxyz, LAMMPS dump, xdatcar,
 # vasprun, ...) so we don't replicate the parser server-side.
 panel_trajectories: dict[str, dict[str, str]] = {}
+panel_manifests: dict[str, dict[str, Any]] = {}
 
 pending_workflow_id: str = ""
 
@@ -51,6 +54,7 @@ pending_workflow_id: str = ""
 # them rather than blocking the writer.
 
 panel_subscribers: dict[str, list[asyncio.Queue]] = {}
+pending_commands: dict[str, asyncio.Future] = {}
 
 
 def subscribe(panel_id: str) -> asyncio.Queue:
@@ -93,17 +97,10 @@ def notify_structure(
 
     `intent` tags whether this push EDITS the existing structure (default —
     the viewer applies it in place) or LOADS a fresh one ("load" — the
-    frontend may prompt the user before overwriting). Carried through to the
-    SSE event payload so the frontend can gate on it.
-
-    `had_structure` is whether the target panel ALREADY held a non-empty
-    structure BEFORE this push. The frontend's hold-gate ORs this
-    backend-authoritative flag against its own (racy) structure read, so a
-    `load` into an occupied pane is held even when a scene remount /
-    `view/reset` momentarily makes the FE read empty. The PASSED value is
-    used verbatim — do NOT self-compute here, because by the time the
-    pending-update leg calls this the /push leg may have already overwritten
-    the store (making a re-derived value wrong).
+    frontend may prompt before overwriting). `had_structure` is the
+    backend-authoritative "panel already occupied" flag. Both ride into the
+    SSE payload so the frontend hold-gate (`should_apply_push`) survives the
+    scene-remount race. See PR #372.
     """
     _notify(
         panel_id,
@@ -127,11 +124,49 @@ def notify_trajectory(panel_id: str, content: str, filename: str) -> None:
     _notify(panel_id, "trajectory", {"content": content, "filename": filename})
 
 
+async def request_viewer_command(
+    panel_id: str,
+    action: str,
+    arguments: dict[str, Any],
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Send a command to one mounted viewer and await its result."""
+    if not has_subscribers(panel_id):
+        return {
+            "ok": False,
+            "error": f"Viewer '{panel_id}' is not mounted or no longer exists.",
+        }
+    loop = asyncio.get_running_loop()
+    # uuid (not id(loop)+loop.time(), which can collide for two commands issued
+    # in the same tick and clobber each other's pending future).
+    command_id = f"cmd-{uuid.uuid4().hex}"
+    future = loop.create_future()
+    pending_commands[command_id] = future
+    _notify(panel_id, "command", {
+        "command_id": command_id,
+        "action": action,
+        "arguments": arguments,
+    })
+    try:
+        return await asyncio.wait_for(future, timeout=timeout)
+    finally:
+        pending_commands.pop(command_id, None)
+
+
+def complete_viewer_command(command_id: str, result: dict[str, Any]) -> bool:
+    future = pending_commands.get(command_id)
+    if not future or future.done():
+        return False
+    future.set_result(result)
+    return True
+
+
 def push_trajectory(panel_id: str, content: str, filename: str) -> None:
     """Store trajectory + notify SSE subscribers + clear any stale
     single-structure cache for the same panel (mutually exclusive in
     the viewer — a pane shows EITHER a structure OR a trajectory).
     Replayed on (re)connect via the SSE snapshot mechanism."""
+    panel_id = resolve_panel_id(panel_id)
     panel_trajectories[panel_id] = {"content": content, "filename": filename}
     panel_structures.pop(panel_id, None)
     panel_pending_updates.pop(panel_id, None)
@@ -140,7 +175,64 @@ def push_trajectory(panel_id: str, content: str, filename: str) -> None:
 
 def get_trajectory(panel_id: str) -> dict | None:
     """Return {'content': str, 'filename': str} or None."""
-    return panel_trajectories.get(panel_id)
+    return panel_trajectories.get(resolve_panel_id(panel_id))
+
+
+def update_manifest(panel_id: str, manifest: dict[str, Any]) -> None:
+    panel_manifests[panel_id] = {**manifest, "viewer_id": panel_id}
+
+
+def remove_manifest(panel_id: str) -> None:
+    panel_manifests.pop(panel_id, None)
+
+
+def list_manifests(tab_id: str = "") -> list[dict[str, Any]]:
+    manifests = [
+        manifest for manifest in panel_manifests.values()
+        if not tab_id or manifest.get("tab_id") == tab_id
+    ]
+    return sorted(manifests, key=lambda item: item.get("pane_number", 0))
+
+
+def resolve_viewer_ref(ref: str, tab_id: str = "") -> tuple[str | None, str | None]:
+    """Resolve an exact viewer id or a unique manifest position/name."""
+    if ref in panel_manifests or has_subscribers(ref):
+        return ref, None
+    position_aliases = {
+        "左": "left", "右": "right", "上": "top", "下": "bottom",
+        "左上": "top-left", "右上": "top-right",
+        "左下": "bottom-left", "右下": "bottom-right",
+        "左上角": "top-left", "右上角": "top-right",
+        "左下角": "bottom-left", "右下角": "bottom-right",
+    }
+    normalized = ref.strip().lower().replace(" ", "-")
+    position = position_aliases.get(ref.strip(), normalized)
+    ref_l = ref.strip().lower()
+    pane_match = re.fullmatch(r"(?:pane|window|窗口)[-_ ]?(\d+)", normalized)
+    pane_number = int(pane_match.group(1)) if pane_match else None
+
+    def _filename_matches(filename: object) -> bool:
+        # Exact name or stem only — substring ("o" → "POSCAR") routes to the
+        # wrong pane.
+        name = str(filename or "").lower()
+        if not name:
+            return False
+        stem = name.rsplit(".", 1)[0] if "." in name else name
+        return ref_l in (name, stem)
+
+    matches = [
+        manifest for manifest in list_manifests(tab_id)
+        if manifest.get("position") == position
+        or str(manifest.get("label") or "").lower() == ref_l
+        or (pane_number is not None and manifest.get("pane_number") == pane_number)
+        or _filename_matches(manifest.get("filename"))
+    ]
+    if len(matches) == 1:
+        return str(matches[0]["viewer_id"]), None
+    if len(matches) > 1:
+        ids = ", ".join(str(item["viewer_id"]) for item in matches)
+        return None, f"Viewer reference '{ref}' is ambiguous: {ids}"
+    return None, f"Viewer '{ref}' was not found"
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +248,22 @@ def get_trajectory(panel_id: str) -> dict | None:
 # do NOT update it (lab shouldn't hijack the notion of "active").
 
 last_active_panel_id: str = "default"
+active_viewer_by_tab: dict[str, str] = {}
+
+
+def _tab_id_for_viewer(panel_id: str) -> str | None:
+    """Return the owning tab for a stable ``<tab>:<leaf>`` viewer id."""
+    if ":" not in panel_id:
+        return None
+    tab_id, _leaf_id = panel_id.rsplit(":", 1)
+    return tab_id or None
+
+
+def resolve_panel_id(panel_id: str) -> str:
+    """Resolve a legacy tab target to that tab's currently active viewer."""
+    if ":" not in panel_id and panel_id in active_viewer_by_tab:
+        return active_viewer_by_tab[panel_id]
+    return panel_id
 
 
 def mark_active(panel_id: str) -> None:
@@ -163,6 +271,9 @@ def mark_active(panel_id: str) -> None:
     global last_active_panel_id
     if panel_id:
         last_active_panel_id = panel_id
+        tab_id = _tab_id_for_viewer(panel_id)
+        if tab_id:
+            active_viewer_by_tab[tab_id] = panel_id
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +282,7 @@ def mark_active(panel_id: str) -> None:
 
 
 def get_panel_pending(panel_id: str) -> deque:
+    panel_id = resolve_panel_id(panel_id)
     if panel_id not in panel_pending_updates:
         panel_pending_updates[panel_id] = deque(maxlen=16)
     return panel_pending_updates[panel_id]
@@ -181,6 +293,7 @@ def get_panel_selection(panel_id: str) -> Any:
 
     Returns a dict (not SelectionState model) to avoid circular imports.
     """
+    panel_id = resolve_panel_id(panel_id)
     if panel_id not in panel_selections:
         panel_selections[panel_id] = {"indices": [], "atoms": []}
     return panel_selections[panel_id]
@@ -193,6 +306,7 @@ def get_panel_selection(panel_id: str) -> Any:
 
 def get_structure(panel_id: str = "default") -> dict | None:
     """Get the structure dict for a SPECIFIC panel. Returns None if empty."""
+    panel_id = resolve_panel_id(panel_id)
     struct = panel_structures.get(panel_id, {})
     return struct if struct else None
 
@@ -214,16 +328,14 @@ def push_structure(
     Does NOT call mark_active — this is the path MCP pushes take, and lab
     pushes shouldn't change the user's idea of which panel is "active".
 
-    `intent` ("edit" default | "load") rides along into the SSE event so the
-    frontend can prompt before overwriting on a fresh load. See
-    `notify_structure` for the full rationale.
-
-    `had_structure` is whether the target panel was occupied BEFORE this
-    push (the backend-authoritative hold signal). When None it is
-    self-computed HERE, before the store write — this is the in-process
-    path (upload-and-load, `_push_structure_direct`) which overwrites the
-    store itself, so we must capture occupancy first.
+    `intent` ("edit" default | "load") rides into the SSE event so the
+    frontend can prompt before overwriting on a fresh load. `had_structure`
+    is the backend-authoritative hold signal; when None it is self-computed
+    HERE against the RESOLVED panel, before the store write — the in-process
+    path (upload-and-load, `_push_structure_direct`) overwrites the store
+    itself, so occupancy must be captured first. See PR #372.
     """
+    panel_id = resolve_panel_id(panel_id)
     if had_structure is None:
         had_structure = bool(panel_structures.get(panel_id))
     panel_structures[panel_id] = struct
@@ -239,6 +351,7 @@ def push_structure(
 
 def get_state_summary(panel_id: str = "default") -> dict[str, Any]:
     """Compact state summary — formula, lattice, selection, etc."""
+    panel_id = resolve_panel_id(panel_id)
     struct_dict = panel_structures.get(panel_id, {})
     if not struct_dict:
         return {"has_structure": False}
@@ -317,20 +430,26 @@ def reset(panel_id: str = "") -> None:
         panel_structure_info.pop(panel_id, None)
         panel_selections.pop(panel_id, None)
         panel_trajectories.pop(panel_id, None)
+        panel_manifests.pop(panel_id, None)
         pq = panel_pending_updates.pop(panel_id, None)
         if pq:
             pq.clear()
         if last_active_panel_id == panel_id:
             last_active_panel_id = "default"
+        for tab_id, viewer_id in list(active_viewer_by_tab.items()):
+            if viewer_id == panel_id:
+                active_viewer_by_tab.pop(tab_id, None)
         logger.info("View state reset for panel '%s'", panel_id)
     else:
         panel_structures.clear()
         panel_structure_info.clear()
         panel_selections.clear()
         panel_trajectories.clear()
+        panel_manifests.clear()
         for pq in panel_pending_updates.values():
             pq.clear()
         panel_pending_updates.clear()
         pending_workflow_id = ""
         last_active_panel_id = "default"
+        active_viewer_by_tab.clear()
         logger.info("View state reset (all panels)")

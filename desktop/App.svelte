@@ -60,6 +60,7 @@
   } from './pane-utils'
   // Recursive pane tree (replaces the fixed single/splitH/splitV/quad grid)
   import PaneTree from './PaneTree.svelte'
+  import { compute_pane_layout, position_alias } from './pane-layout'
   import {
     type LeafNode, type PresetId,
     leaves, leafCount, findLeafById, findFirstEmptyLeaf,
@@ -69,6 +70,7 @@
   // Deep-clone structures on assignment into a pane so panes/tabs never alias
   // the same object (module-level samples, library entries, reused DB imports).
   import { clone_structure } from '$lib/structure/clone'
+  import { clone_trajectory_for_pane } from '$lib/trajectory/clone'
   import { set_terminal_opener, get_active_terminal, type TerminalHandle } from '$lib/structure/terminal-registry.svelte'
   // SDK-agent visible-terminal bridge: global poller + approval card
   import {
@@ -110,6 +112,12 @@
     save_and_close_panel as _save_and_close_panel,
     type PaneManagerDeps,
   } from './lib/pane-manager'
+  import {
+    cancel_pending_library_removal,
+    leaves_for_library_entry,
+    prepare_library_entry_removal,
+    sync_active_library_entry,
+  } from './lib/library-pane-bindings'
   // Extracted layout manager
   import {
     handle_layout_change as _handle_layout_change,
@@ -190,6 +198,11 @@
     tab_states,
     update_tab_label,
     export_fs_browse: (dir) => export_fs_browse(dir),
+    reset_viewer: (tab_id, leaf_id) => {
+      if (!STATIC_ONLY) {
+        fetch(`${API_BASE}/view/reset?panel_id=${encodeURIComponent(`${tab_id}:${leaf_id}`)}`, { method: `POST` }).catch(() => {})
+      }
+    },
   }
   const layout_deps: LayoutManagerDeps = {
     get_active_ts,
@@ -200,7 +213,7 @@
     set_pending_layout_change: (v) => { tm.pending_layout_change = v },
   }
   const export_deps: ExportHandlerDeps = {
-    close_panel: (tab_id, leaf_id) => _close_panel(pane_deps, tab_id, leaf_id),
+    close_panel: (tab_id, leaf_id) => close_panel(tab_id, leaf_id),
     load_close_save_projects,
   }
   const drag_deps: DragDropDeps = {
@@ -435,7 +448,23 @@
     ts.active_leaf_id = empty.id
   }
   function handle_unload(tab_id: string, leaf_id: string) { _handle_unload(pane_deps, tab_id, leaf_id) }
-  function close_panel(tab_id: string, leaf_id: string) { _close_panel(pane_deps, tab_id, leaf_id) }
+  function close_panel(tab_id: string, leaf_id: string) {
+    _close_panel(pane_deps, tab_id, leaf_id)
+  }
+  function cancel_panel_close(tab_id: string, leaf_id: string) {
+    const ts = tab_states[tab_id]
+    if (!ts) return
+    ts.close_confirm_leaf_id = null
+    cancel_pending_library_removal(ts, leaf_id)
+  }
+  function cancel_export_dialog() {
+    const close_after = exp.close_after
+    exp.dialog = null
+    exp.close_after = null
+    if (!close_after) return
+    const ts = tab_states[close_after.tab_id]
+    if (ts) cancel_pending_library_removal(ts, close_after.leaf_id)
+  }
   function save_and_close_panel(tab_id: string, leaf_id: string) { return _save_and_close_panel(pane_deps, tab_id, leaf_id) }
   function handle_layout_change(new_layout: PresetId) { _handle_layout_change(layout_deps, new_layout) }
   function confirm_layout_change() { _confirm_layout_change(layout_deps) }
@@ -1256,7 +1285,7 @@
     } else if (e.is_trajectory) {
       p.is_trajectory_mode = true
       p.structure = undefined
-      p.trajectory = e.trajectory
+      p.trajectory = clone_trajectory_for_pane(e.trajectory as TrajectoryType)
       p.initial_site_count = 0
       p.initial_structure_ref = null
       p.cube_file = null
@@ -1276,6 +1305,7 @@
     p.remote_origin = remote_origin
     p.local_file_path = local_file_path
     p.source_filename = e.filename
+    p.library_entry_id = ts.library.some((entry) => entry.id === e.id) ? e.id : null
     p.viewer_kind = e.viewer_kind ?? `native`
     p.bio_raw_content = e.bio_raw_content
     p.bio_format = e.bio_format
@@ -1444,27 +1474,32 @@
     if (!ts) return
     const entry = ts.library.find(e => e.id === id)
     if (!entry) return
+    const bound = leaves_for_library_entry(ts, id)
+    if (bound.length > 1) {
+      console.warn(`[structure-library] entry ${id} is bound to multiple panes; refusing to guess`)
+      return
+    }
+    if (bound.length === 1) {
+      ts.active_leaf_id = bound[0].id
+      ts.active_library_id = id
+      tick().then(() => window.dispatchEvent(new Event(`resize`)))
+      return
+    }
     apply_entry_to_pane(tab_id, ts, ts.active_leaf_id, entry)
     ts.active_library_id = id
     tick().then(() => window.dispatchEvent(new Event(`resize`)))
   }
 
-  /** Remove one entry; if it was active, fall back to the first remaining (or clear the pane). */
+  /** Remove one exact entry instance and close only the pane bound to it. */
   function remove_library_entry(tab_id: string, id: string) {
     const ts = tab_states[tab_id]
     if (!ts) return
-    const was_active = ts.active_library_id === id
-    ts.library = ts.library.filter(e => e.id !== id)
-    if (!was_active) return
-    if (ts.library.length > 0) {
-      select_library_entry(tab_id, ts.library[0].id)
-    } else {
-      ts.active_library_id = null
-      const leaf = findLeafById(ts.root, ts.active_leaf_id)
-      const pane = leaf ? structurePane(leaf) : null
-      if (pane) Object.assign(pane, create_empty_pane())
-      update_tab_label(tab_id)
+    const request = prepare_library_entry_removal(ts, id)
+    if (request.kind === `ambiguous`) {
+      console.warn(`[structure-library] entry ${id} is bound to multiple panes; removal cancelled`)
+      return
     }
+    if (request.kind === `close`) handle_unload(tab_id, request.leaf_id)
   }
 
   /** Empty the library list (does not clear what's currently shown in the pane). */
@@ -1544,7 +1579,7 @@
             return
           }
         }
-        p.trajectory = data.trajectory
+        p.trajectory = clone_trajectory_for_pane(data.trajectory as TrajectoryType)
         p.is_trajectory_mode = true
         p.structure = undefined
         p.initial_site_count = 0
@@ -1777,7 +1812,7 @@
       const first = ts ? leaves(ts.root)[0] : null
       const pane = first ? structurePane(first) : null
       if (!ts || !pane) return false
-      pane.trajectory = traj
+      pane.trajectory = clone_trajectory_for_pane(traj)
       pane.structure = undefined  // mutually exclusive
       pane.is_trajectory_mode = true
       pane.source_filename = filename || null
@@ -1828,7 +1863,9 @@
   // popout return, etc.
   $effect(() => {
     if (STATIC_ONLY) return
-    const id = tm.active_tab_id
+    const tab_id = tm.active_tab_id
+    const ts = tab_states[tab_id]
+    const id = ts ? `${tab_id}:${ts.active_leaf_id}` : tab_id
     if (!id) return
     fetch(`${API_BASE}/view/active-panel?panel_id=${encodeURIComponent(id)}`, {
       method: `POST`,
@@ -2008,7 +2045,7 @@
           close_confirm_leaf_id={ts.close_confirm_leaf_id}
           maximized_leaf_id={ts.maximized_leaf_id}
           {active_split_id}
-          on_activate={(id) => ts.active_leaf_id = id}
+          on_activate={(id) => { ts.active_leaf_id = id; sync_active_library_entry(ts) }}
           on_split_mousedown={(e, sid, dir) => start_split_resize(e, sid, dir, tab.id)}
           on_split_dblclick={(sid) => { ts.root = setRatio(ts.root, sid, 0.5) }}
           {leaf_body}
@@ -2136,7 +2173,7 @@
               </svg>
               {#if pane.mode === `workflow`}
                 <span>{t(`app.workflow_will_be_closed`)}</span>
-                <button class="banner-btn cancel" onclick={(e) => { e.stopPropagation(); ts.close_confirm_leaf_id = null }}>{t(`common.cancel`)}</button>
+                <button class="banner-btn cancel" onclick={(e) => { e.stopPropagation(); cancel_panel_close(tab.id, leaf.id) }}>{t(`common.cancel`)}</button>
                 <button class="banner-btn close" onclick={(e) => { e.stopPropagation(); close_panel(tab.id, leaf.id) }}>{t(`common.close`)}</button>
               {:else}
                 <span>{t(`common.save_before_close`)}</span>
@@ -2169,7 +2206,7 @@
                   {exp.close_saving ? t(`common.saving`) : t(`common.save_and_close`)}
                 </button>
                 <button class="banner-btn close" onclick={(e) => { e.stopPropagation(); close_panel(tab.id, leaf.id) }}>{t(`common.close`)}</button>
-                <button class="banner-btn cancel" onclick={(e) => { e.stopPropagation(); ts.close_confirm_leaf_id = null }}>{t(`common.cancel`)}</button>
+                <button class="banner-btn cancel" onclick={(e) => { e.stopPropagation(); cancel_panel_close(tab.id, leaf.id) }}>{t(`common.cancel`)}</button>
               {/if}
             </div>
           {/if}
@@ -2177,6 +2214,12 @@
 
         {#snippet leaf_body(leaf: LeafNode)}
           {@const pane = leaf.content.type === `structure` ? leaf.content.pane : undefined}
+          {@const pane_layout = compute_pane_layout(ts.root, ts.maximized_leaf_id)}
+          {@const pane_box = pane_layout.leaves.find((box) => box.leaf.id === leaf.id)}
+          {@const visible_panes = pane_layout.leaves.filter((box) => box.rect.w > 0 && box.rect.h > 0)}
+          {@const pane_number = pane_layout.leaves.findIndex((box) => box.leaf.id === leaf.id) + 1}
+          {@const viewer_id = `${tab.id}:${leaf.id}`}
+          {@const pane_position = pane_box ? position_alias(pane_box.rect, visible_panes.length) : `hidden`}
           {#if pane}
           {#if pane.mode === `workflow`}
             <WorkflowView
@@ -2190,12 +2233,19 @@
           {:else if pane.is_trajectory_mode && pane.trajectory}
             <Trajectory
               trajectory={pane.trajectory as any}
+              {viewer_id}
+              tab_id={tab.id}
+              leaf_id={leaf.id}
+              pane_position={pane_position}
+              {pane_number}
+              filename={pane.source_filename}
+              is_active={ts.active_leaf_id === leaf.id && tab.id === tm.active_tab_id}
               bind:selected_sites={pane.selected_sites}
               bind:current_step_idx={pane.current_step_idx}
               on_file_load={create_on_file_load(tab.id, leaf.id)}
               fullscreen_toggle={false}
               allow_file_drop={false}
-              structure_props={{ fullscreen_toggle: false, hide_extra_tools: false, initial_traj_b64: pane.raw_traj_b64, initial_traj_format: pane.raw_traj_format, tab_id: tab.id, is_active: ts.active_leaf_id === leaf.id && tab.id === tm.active_tab_id }}
+              structure_props={{ fullscreen_toggle: false, hide_extra_tools: false, initial_traj_b64: pane.raw_traj_b64, initial_traj_format: pane.raw_traj_format }}
               style="--struct-height: 100%; --struct-width: 100%; border-radius: 0;"
             >
               {#snippet trajectory_controls({ trajectory: traj, current_step_idx: step, on_step_change })}
@@ -2221,6 +2271,11 @@
           {:else if pane.structure}
             <Structure
               tab_id={tab.id}
+              {viewer_id}
+              leaf_id={leaf.id}
+              pane_position={pane_position}
+              {pane_number}
+              filename={pane.source_filename}
               is_active={ts.active_leaf_id === leaf.id && tab.id === tm.active_tab_id}
               bind:structure={pane.structure}
               bind:saveable_structure={pane.saveable_structure}
@@ -2774,6 +2829,7 @@
   hpc_path={sidebar.hpc_path}
   {export_fs_browse}
   {do_export}
+  oncancel={cancel_export_dialog}
 />
 
 
