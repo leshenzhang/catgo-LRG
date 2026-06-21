@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { COHPSeries } from './cohp_types'
   import { plot_theme_colors } from './plot-theme.svelte'
+  import { PALETTE_PRESETS } from './palettes'
+  import { compute_export_px } from './export-dims'
 
   let {
     energies = [],
@@ -55,11 +57,6 @@
   let container_div: HTMLDivElement | undefined = $state()
   let Plotly: any = $state(null)
   let container_height: number = $state(400)
-
-  const DEFAULT_COLORS = [
-    `#1f77b4`, `#ff7f0e`, `#2ca02c`, `#d62728`, `#9467bd`,
-    `#8c564b`, `#e377c2`, `#7f7f7f`, `#bcbd22`, `#17becf`,
-  ]
 
   const is_horizontal = $derived(orientation === `horizontal`)
 
@@ -140,7 +137,7 @@
     for (let i = 0; i < series.length; i++) {
       const s = series[i]
       const style = line_styles[s.label] ?? {}
-      const color = style.color ?? DEFAULT_COLORS[i % DEFAULT_COLORS.length]
+      const color = style.color ?? PALETTE_PRESETS.default[i % PALETTE_PRESETS.default.length]
       const dash = style.dash ?? `solid`
       const lw = style.width ?? 1.5
       const is_hidden = hidden_set.has(s.label)
@@ -341,15 +338,21 @@
     return JSON.stringify({ energies, series: visible, efermi, spin_mode }, null, 2)
   }
 
-  export async function export_image(format: `png` | `svg` = `png`): Promise<string | null> {
+  export async function export_image(
+    format: `png` | `svg` = `png`,
+    opts?: { dpi?: number; width_mm?: number },
+  ): Promise<string | null> {
     if (!Plotly || !plot_div) return null
-    const url = await Plotly.toImage(plot_div, {
+    if (format === `png` && opts?.dpi && opts?.width_mm) {
+      const { width, height } = compute_export_px(opts.width_mm, opts.dpi, container_height / 800)
+      return await Plotly.toImage(plot_div, { format, width, height, scale: 1 })
+    }
+    return await Plotly.toImage(plot_div, {
       format,
       width: 800,
       height: container_height,
       scale: 2,
     })
-    return url
   }
 </script>
 

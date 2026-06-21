@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { BandSeries, BandProjection } from './band_types'
+  import { PALETTE_PRESETS, type PaletteName } from './palettes'
   import { plot_theme_colors } from './plot-theme.svelte'
+  import { compute_export_px } from './export-dims'
 
   let {
     distance = [],
@@ -25,6 +27,10 @@
     title_size = 14,
     font_size = 12,
     legend_visible = true,
+    spin_up_color,
+    spin_down_color,
+    proj_palette,
+    proj_colors,
   }: {
     distance: number[]
     band_series: BandSeries[]
@@ -47,17 +53,16 @@
     title_size?: number
     font_size?: number
     legend_visible?: boolean
+    spin_up_color?: string
+    spin_down_color?: string
+    proj_palette?: PaletteName
+    proj_colors?: Record<string, string>
   } = $props()
 
   let plot_div: HTMLDivElement | undefined = $state()
   let container_div: HTMLDivElement | undefined = $state()
   let Plotly: any = $state(null)
   let container_height: number = $state(400)
-
-  const COLORS = [
-    `#1f77b4`, `#ff7f0e`, `#2ca02c`, `#d62728`, `#9467bd`,
-    `#8c564b`, `#e377c2`, `#7f7f7f`, `#bcbd22`, `#17becf`,
-  ]
 
   // Dynamic Plotly import
   $effect(() => {
@@ -115,7 +120,9 @@
 
       const is_down = bs.spin === `down`
       const line_dash = is_down ? `dash` : `solid`
-      const line_color = is_down ? `rgba(100, 160, 255, 0.6)` : `rgba(100, 160, 255, 0.8)`
+      const line_color = is_down
+        ? (spin_down_color ?? `rgba(100, 160, 255, 0.6)`)
+        : (spin_up_color ?? `rgba(100, 160, 255, 0.8)`)
 
       for (let band_idx = 0; band_idx < bs.bands.length; band_idx++) {
         const energies = bs.bands[band_idx]
@@ -140,7 +147,8 @@
         const proj = projections[proj_idx]
         if (proj.spin === `down` && !show_spin_down) continue
 
-        const color = COLORS[proj_idx % COLORS.length]
+        const palette = PALETTE_PRESETS[proj_palette ?? `default`]
+        const color = proj_colors?.[proj.label] ?? palette[proj_idx % palette.length]
         // Find matching band series
         const bs = band_series.find((s) => s.spin === proj.spin) ?? band_series[0]
 
@@ -304,15 +312,21 @@
     return JSON.stringify({ distance, band_series, tick_labels, tick_positions, efermi }, null, 2)
   }
 
-  export async function export_image(format: `png` | `svg` = `png`): Promise<string | null> {
+  export async function export_image(
+    format: `png` | `svg` = `png`,
+    opts?: { dpi?: number; width_mm?: number },
+  ): Promise<string | null> {
     if (!Plotly || !plot_div) return null
-    const url = await Plotly.toImage(plot_div, {
+    if (format === `png` && opts?.dpi && opts?.width_mm) {
+      const { width, height } = compute_export_px(opts.width_mm, opts.dpi, container_height / 800)
+      return await Plotly.toImage(plot_div, { format, width, height, scale: 1 })
+    }
+    return await Plotly.toImage(plot_div, {
       format,
       width: 800,
       height: container_height,
       scale: 2,
     })
-    return url
   }
 </script>
 
