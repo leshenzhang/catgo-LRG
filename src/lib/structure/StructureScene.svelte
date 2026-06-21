@@ -5,7 +5,7 @@
   import { resolve_css_var } from '$lib/css-utils'
   import { format_num } from '$lib/labels'
   import * as math from '$lib/math'
-  import { type CameraProjection, DEFAULTS, type ShowBonds } from '$lib/settings'
+  import { type CameraProjection, DEFAULTS, type LightingProfile, type RenderStyle, type ShowBonds } from '$lib/settings'
   import { colors } from '$lib/state.svelte'
   import { Arrow, Cylinder, get_rotation_center, Lattice } from '$lib/structure'
   import * as measure from '$lib/structure/measure'
@@ -476,6 +476,11 @@
     depth_cue_end = DEFAULTS.structure.depth_cue_end,
     atom_outline_strength = DEFAULTS.structure.atom_outline_strength,
     bond_outline_strength = DEFAULTS.structure.bond_outline_strength,
+    render_style = DEFAULTS.structure.render_style,
+    light_azimuth = DEFAULTS.structure.light_azimuth,
+    light_elevation = DEFAULTS.structure.light_elevation,
+    highlight_strength = DEFAULTS.structure.highlight_strength,
+    lighting_profiles = DEFAULTS.structure.lighting_profiles,
     background_color = undefined as string | undefined,
     background_opacity = DEFAULTS.background_opacity,
     sphere_segments = DEFAULTS.structure.sphere_segments,
@@ -729,6 +734,14 @@
     depth_cue_end?: number
     atom_outline_strength?: number
     bond_outline_strength?: number
+    render_style?: RenderStyle // material/shading style for atoms (glossy | matte | toon)
+    light_azimuth?: number // headlamp azimuth in degrees (view-space) — legacy flat fallback seed
+    light_elevation?: number // headlamp elevation in degrees (view-space) — legacy flat fallback seed
+    highlight_strength?: number // specular highlight multiplier (uSpecStrength) — legacy flat fallback seed
+    // Per-render-style lighting profiles — source of truth for the 5 lighting
+    // params (active profile = lighting_profiles[render_style]). The flat
+    // light_*/…/highlight_strength props above are only the fallback seed.
+    lighting_profiles?: Record<RenderStyle, LightingProfile>
     background_color?: string | undefined
     background_opacity?: number
     sphere_segments?: number
@@ -1893,6 +1906,199 @@
     mat.needsUpdate = true
   }
 
+  // ── Toon (cel) shading ───────────────────────────────────────────────────
+  // Custom 3-band ShaderMaterial ported from AtomCanvas ToonHighlightMaterial
+  // (MIT). Adapted to CatGo's NON-instanced per-mesh atom path: the reference
+  // folds instanceMatrix/instanceColor/instanceAlpha — none of that applies
+  // here, so per-mesh `uColor` + the standard modelViewMatrix path are used.
+  // Because swapping away from MeshStandardMaterial drops the onBeforeCompile
+  // patch, the silhouette/rim outline AND VESTA depth-cue fade from
+  // apply_depth_cueing_to_material are folded directly into the fragment shader
+  // and wired to the SAME shared depth_cue_uniforms object, so
+  // atom_outline_strength + depth cueing keep driving toon atoms. Self-lit from
+  // a view-space headlamp (uLightDir), matching Bond.svelte; scene lights are
+  // ignored (matches AtomCanvas Lighting.tsx → null for cartoon). GLSL1-safe.
+  const toon_vertex_shader = `
+    varying vec3 vNormal;
+    varying vec3 vDepthCueViewPos;
+    varying float vDepthCueZ;
+    void main() {
+      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      vNormal = normalize(normalMatrix * normal);
+      vDepthCueViewPos = mvPosition.xyz;
+      vDepthCueZ = -mvPosition.z;
+      gl_Position = projectionMatrix * mvPosition;
+    }
+  `
+  const toon_fragment_shader = `
+    uniform vec3 uColor;             // per-mesh atom color (linear)
+    uniform vec3 uLightDir;          // view-space headlamp (normalized)
+    uniform float uShadowThreshold;
+    uniform float uHighlightThreshold;
+    uniform float uShadowBrightness;
+    uniform float uOpacity;
+    uniform float uDepthCueing;
+    uniform float uDepthNear;
+    uniform float uDepthFar;
+    uniform vec3 uDepthCueBgColor;
+    uniform float uOutlineStrength;
+    varying vec3 vNormal;
+    varying vec3 vDepthCueViewPos;
+    varying float vDepthCueZ;
+
+    vec3 catgoLinearTosRGB(vec3 c) {
+      return vec3(
+        c.r <= 0.0031308 ? c.r * 12.92 : 1.055 * pow(c.r, 1.0/2.4) - 0.055,
+        c.g <= 0.0031308 ? c.g * 12.92 : 1.055 * pow(c.g, 1.0/2.4) - 0.055,
+        c.b <= 0.0031308 ? c.b * 12.92 : 1.055 * pow(c.b, 1.0/2.4) - 0.055
+      );
+    }
+
+    void main() {
+      vec3 normal = normalize(vNormal);
+      vec3 lightDir = normalize(uLightDir);
+      float diffuse = dot(normal, lightDir);
+
+      // 3-band cel shading (AtomCanvas ToonHighlightMaterial)
+      vec3 finalColor;
+      if (diffuse > uHighlightThreshold) {
+        finalColor = vec3(1.0, 1.0, 1.0);
+      } else if (diffuse > uShadowThreshold) {
+        finalColor = uColor;
+      } else {
+        finalColor = uColor * uShadowBrightness;
+      }
+
+      // Encode to sRGB so toon atoms match the sRGB-encoded glossy/bond paths.
+      gl_FragColor = vec4(catgoLinearTosRGB(finalColor), uOpacity);
+
+      // VESTA depth cueing — folded from apply_depth_cueing_to_material. Bg
+      // color is linear (Three.js Color); encode before mixing in sRGB space.
+      if (uDepthCueing > 0.0) {
+        float fade = clamp((vDepthCueZ - uDepthNear) / max(uDepthFar - uDepthNear, 0.01), 0.0, 1.0) * uDepthCueing;
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, catgoLinearTosRGB(uDepthCueBgColor), fade);
+      }
+
+      // Silhouette/rim outline — folded from apply_depth_cueing_to_material,
+      // driven by the shared uOutlineStrength (= atom_outline_strength).
+      if (uOutlineStrength > 0.0) {
+        vec3 viewDir = normalize(-vDepthCueViewPos);
+        float NdotV = max(dot(normal, viewDir), 0.0);
+        float silhouette = smoothstep(0.55, 1.0, 1.0 - NdotV);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.0), silhouette * uOutlineStrength);
+      }
+    }
+  `
+
+  // Toon ShaderMaterials for the partial-occupancy snippet path (the bulk atom
+  // impostor path branches on a uniform instead — see AtomImpostors /
+  // AtomManagerInstances `uRenderStyle`). Materials are MEMOIZED per
+  // (color, opacity, transparent, double_sided): the snippet re-runs on every
+  // cutting-plane drag / desaturation change, and constructing a fresh
+  // ShaderMaterial each time leaked the orphaned GPU program (Threlte's `<T is>`
+  // swaps the object but never disposes the old one). The arg tuple fully
+  // determines the material — depth_cue_uniforms are shared by reference and
+  // update in place — so the cache stays small (a handful of partial-occupancy
+  // atoms × cutting states) and is disposed wholesale on teardown.
+  // ─── Per-render-style lighting profiles ───
+  // The 5 lighting params (light_azimuth/elevation, directional/ambient_light,
+  // highlight_strength) are PER render_style. lighting_profiles[render_style]
+  // is the active profile and the SOURCE OF TRUTH for the values fed to the
+  // shaders. Switching render_style reactively swaps the active profile, so the
+  // render updates with no extra wiring. The flat light_*/…/highlight_strength
+  // props are only a fallback seed (e.g. old persisted settings without a
+  // profile map, or non-Structure callers passing flat props).
+  const active_lighting = $derived(
+    lighting_profiles?.[render_style] ?? {
+      light_azimuth,
+      light_elevation,
+      directional_light,
+      ambient_light,
+      highlight_strength,
+    },
+  )
+  const active_light_azimuth = $derived(active_lighting.light_azimuth)
+  const active_light_elevation = $derived(active_lighting.light_elevation)
+  const active_directional_light = $derived(active_lighting.directional_light)
+  const active_ambient_light = $derived(active_lighting.ambient_light)
+  const active_highlight_strength = $derived(active_lighting.highlight_strength)
+
+  // View-space headlamp direction derived from the ACTIVE profile's azimuth/
+  // elevation. Convention: x=right, y=up, z=toward camera.
+  //   dir = (cos(el)·sin(az), sin(el), cos(el)·cos(az))   (az,el in radians)
+  // Default az=35°, el=45° → ≈ (0.405, 0.707, 0.579), i.e. the legacy fixed
+  // headlamp (Vector3(0.4,0.7,0.6).normalize()). This Vector3 is threaded into
+  // the atom/bond shader components and copied into the live uLightDir uniform
+  // of make_toon_material.
+  const light_dir = $derived.by(() => {
+    const az = (active_light_azimuth * Math.PI) / 180
+    const el = (active_light_elevation * Math.PI) / 180
+    return new Vector3(
+      Math.cos(el) * Math.sin(az),
+      Math.sin(el),
+      Math.cos(el) * Math.cos(az),
+    ).normalize()
+  })
+
+  const _toon_tmp_color = new Color()
+  const _toon_material_cache = new Map<string, ShaderMaterial>()
+  function make_toon_material(
+    color_hex: string,
+    opacity: number,
+    transparent: boolean,
+    double_sided: boolean,
+  ): ShaderMaterial {
+    const key = `${color_hex}|${opacity}|${transparent ? 1 : 0}|${double_sided ? 1 : 0}`
+    const cached = _toon_material_cache.get(key)
+    if (cached) return cached
+    _toon_tmp_color.set(color_hex).convertSRGBToLinear()
+    const mat = new ShaderMaterial({
+      vertexShader: toon_vertex_shader,
+      fragmentShader: toon_fragment_shader,
+      transparent,
+      depthWrite: !transparent,
+      side: double_sided ? 2 : 0,
+      uniforms: {
+        uColor: { value: _toon_tmp_color.clone() },
+        // Headlamp in view space, driven by the light_azimuth/elevation
+        // sliders (default reproduces the legacy top-front headlamp). Each
+        // cached material's uLightDir is kept live by the $effect below.
+        uLightDir: { value: light_dir.clone() },
+        uShadowThreshold: { value: 0.3 },
+        uHighlightThreshold: { value: 0.97 },
+        uShadowBrightness: { value: 0.5 },
+        uOpacity: { value: opacity },
+        // Share the same uniform objects the depth-cue/outline effect writes to.
+        uDepthCueing: depth_cue_uniforms.uDepthCueing,
+        uDepthNear: depth_cue_uniforms.uDepthNear,
+        uDepthFar: depth_cue_uniforms.uDepthFar,
+        uDepthCueBgColor: depth_cue_uniforms.uDepthCueBgColor,
+        uOutlineStrength: depth_cue_uniforms.uOutlineStrength,
+      },
+    })
+    _toon_material_cache.set(key, mat)
+    return mat
+  }
+  // Dispose the whole toon-material cache when the scene unmounts.
+  $effect(() => () => {
+    for (const mat of _toon_material_cache.values()) mat.dispose()
+    _toon_material_cache.clear()
+  })
+
+  // LIVE light-direction update for the partial-occupancy toon path. The
+  // cached toon materials are built once per (color|opacity|…) key, so the
+  // creation-time uLightDir would never move when the slider changes — copy
+  // the derived view-space direction into every cached material's uniform
+  // whenever light_dir changes. (Newly-created materials read light_dir at
+  // build time, so they're already correct.)
+  $effect(() => {
+    for (const mat of _toon_material_cache.values()) {
+      mat.uniforms.uLightDir.value.copy(light_dir)
+    }
+    // imperative uniform write bypasses the <T.> prop chain — request a paint
+    mark_dirty()
+  })
+
   // Update depth cueing uniforms reactively — pure uniform updates, no recompilation.
   // Also called per-frame via useTask below to track camera distance changes.
   function update_depth_cue_uniforms() {
@@ -2546,8 +2752,8 @@
     if (instances.length === 0) return []
     return [{
       thickness: hbond_thickness,
-      ambient_light,
-      directional_light,
+      ambient_light: active_ambient_light,
+      directional_light: active_directional_light,
       opacity: 1,
       instances,
     }]
@@ -5070,8 +5276,8 @@
   </T.OrthographicCamera>
 {/if}
 
-<T.DirectionalLight position={[0, 0.3, 1]} intensity={directional_light} />
-<T.AmbientLight intensity={ambient_light} />
+<T.DirectionalLight position={[0, 0.3, 1]} intensity={active_directional_light} />
+<T.AmbientLight intensity={active_ambient_light} />
 
 <!-- Invisible background mesh to catch clicks on empty space -->
 <T.Mesh
@@ -5123,8 +5329,11 @@
             {image_atom_opacity}
             {image_to_original_map}
             {depth_cue_uniforms}
-            {ambient_light}
-            {directional_light}
+            ambient_light={active_ambient_light}
+            directional_light={active_directional_light}
+            {render_style}
+            {light_dir}
+            highlight_strength={active_highlight_strength}
           />
         {:else}
           <!-- Impostor-based atom rendering: billboard quads with ray-sphere fragment shader -->
@@ -5138,8 +5347,11 @@
             {image_atom_opacity}
             {image_to_original_map}
             {depth_cue_uniforms}
-            {ambient_light}
-            {directional_light}
+            ambient_light={active_ambient_light}
+            directional_light={active_directional_light}
+            {render_style}
+            {light_dir}
+            highlight_strength={active_highlight_strength}
           />
         {/if}
 
@@ -5172,6 +5384,58 @@
           />
         {/if}
 
+        <!-- Per-atom material snippet — honors render_style (glossy | matte | toon).
+             Glossy is byte-identical to legacy (MeshStandardMaterial, roughness/
+             metalness UNSET = Three defaults, depth-cue/outline via oncreate patch).
+             Matte adds roughness 1 / metalness 0 / envMapIntensity 0 on the same
+             material+patch. Toon swaps to the self-lit cel ShaderMaterial which
+             folds depth-cue + outline internally via the shared depth_cue_uniforms. -->
+        {#snippet atom_material(color: string, double_sided: boolean, is_cut: boolean, cut_op: number)}
+          {#if render_style === `toon`}
+            <T is={make_toon_material(color, is_cut ? cut_op : 1, is_cut, double_sided)} />
+          {:else if render_style === `matte`}
+            {#if is_cut}
+              <T.MeshStandardMaterial
+                color={color}
+                roughness={1}
+                metalness={0}
+                envMapIntensity={0}
+                side={2}
+                transparent
+                opacity={cut_op}
+                depthWrite={double_sided ? undefined : false}
+                oncreate={apply_depth_cueing_to_material}
+              />
+            {:else}
+              <T.MeshStandardMaterial
+                color={color}
+                roughness={1}
+                metalness={0}
+                envMapIntensity={0}
+                side={double_sided ? 2 : 0}
+                oncreate={apply_depth_cueing_to_material}
+              />
+            {/if}
+          {:else}
+            {#if is_cut}
+              <T.MeshStandardMaterial
+                color={color}
+                side={2}
+                transparent
+                opacity={cut_op}
+                depthWrite={double_sided ? undefined : false}
+                oncreate={apply_depth_cueing_to_material}
+              />
+            {:else}
+              <T.MeshStandardMaterial
+                color={color}
+                side={double_sided ? 2 : 0}
+                oncreate={apply_depth_cueing_to_material}
+              />
+            {/if}
+          {/if}
+        {/snippet}
+
         <!-- Regular rendering for partial occupancy atoms (wedge geometry, typically <10 atoms) -->
         {#each atom_data.filter((atom) => atom.has_partial_occupancy) as
           atom
@@ -5197,48 +5461,17 @@
                   2 * Math.PI * atom.occupancy,
                 ]}
               />
-              {#if is_outside && cut_opacity < 1}
-                <T.MeshStandardMaterial
-                  color={display_color}
-                  transparent
-                  opacity={cut_opacity}
-                  depthWrite={false}
-                  side={2}
-                  oncreate={apply_depth_cueing_to_material}
-                />
-              {:else}
-                <T.MeshStandardMaterial color={display_color} oncreate={apply_depth_cueing_to_material} />
-              {/if}
+              {@render atom_material(display_color, false, is_outside && cut_opacity < 1, cut_opacity)}
             </T.Mesh>
 
             {#if atom.has_partial_occupancy}
               <T.Mesh rotation={[0, atom.start_phi, 0]}>
                 <T.CircleGeometry args={[0.5, sphere_segments]} />
-                {#if is_outside && cut_opacity < 1}
-                  <T.MeshStandardMaterial
-                    color={display_color}
-                    side={2}
-                    transparent
-                    opacity={cut_opacity}
-                    oncreate={apply_depth_cueing_to_material}
-                  />
-                {:else}
-                  <T.MeshStandardMaterial color={display_color} side={2} oncreate={apply_depth_cueing_to_material} />
-                {/if}
+                {@render atom_material(display_color, true, is_outside && cut_opacity < 1, cut_opacity)}
               </T.Mesh>
               <T.Mesh rotation={[0, atom.end_phi, 0]}>
                 <T.CircleGeometry args={[0.5, sphere_segments]} />
-                {#if is_outside && cut_opacity < 1}
-                  <T.MeshStandardMaterial
-                    color={display_color}
-                    side={2}
-                    transparent
-                    opacity={cut_opacity}
-                    oncreate={apply_depth_cueing_to_material}
-                  />
-                {:else}
-                  <T.MeshStandardMaterial color={display_color} side={2} oncreate={apply_depth_cueing_to_material} />
-                {/if}
+                {@render atom_material(display_color, true, is_outside && cut_opacity < 1, cut_opacity)}
               </T.Mesh>
             {/if}
           </T.Group>
@@ -5271,6 +5504,8 @@
           {partner_drawn_lookup}
           multibond_enabled={bond_order_perception}
           {depth_cue_uniforms}
+          {light_dir}
+          highlight_strength={active_highlight_strength}
         />
       {/if}
 
@@ -5476,8 +5711,8 @@
           bonding_options={bonding_options_eff}
           {bond_thickness}
           {bond_color}
-          {ambient_light}
-          {directional_light}
+          ambient_light={active_ambient_light}
+          directional_light={active_directional_light}
           {element_radius_overrides}
           {atom_radius}
           {sphere_segments}

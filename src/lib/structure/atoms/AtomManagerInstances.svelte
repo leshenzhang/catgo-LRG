@@ -80,6 +80,17 @@
     }
     ambient_light?: number
     directional_light?: number
+    /** Atom shading style. Branches the fragment lighting on uRenderStyle:
+     *  glossy (Blinn-Phong, default), matte (diffuse only, no spec), toon
+     *  (3-band cel, AtomCanvas ToonHighlightMaterial). */
+    render_style?: `glossy` | `matte` | `toon`
+    /** View-space headlamp direction (x=right, y=up, z=toward camera). Driven
+     *  by the light_azimuth/elevation sliders; written live into uLightDir. */
+    light_dir?: Vector3
+    /** Specular highlight intensity multiplier (highlight_strength setting).
+     *  Multiplies the glossy spec term; 1.0 = byte-identical legacy look.
+     *  Written live into uSpecStrength. */
+    highlight_strength?: number
     /** Pre-allocated InstancedMesh capacity. Fixed at construction — the
      *  renderer's `sync()` throws if `manager.count` exceeds this. Matches the
      *  BondManagerInstances pattern (fixed 200k). For X3 PoC a generous
@@ -101,8 +112,16 @@
     depth_cue_uniforms,
     ambient_light = 0.7,
     directional_light = 0.3,
+    render_style = `glossy`,
+    light_dir = new Vector3(0.4, 0.7, 0.6).normalize(),
+    highlight_strength = 1.0,
     max_capacity = 200_000,
   }: Props = $props()
+
+  // glossy = 0, matte = 1, toon = 2 (matches the uRenderStyle branch order).
+  function render_style_to_int(style: `glossy` | `matte` | `toon`): number {
+    return style === `toon` ? 2 : style === `matte` ? 1 : 0
+  }
 
   const threlte = useThrelte()
 
@@ -165,6 +184,12 @@
     uniform float uDepthFar;
     uniform vec3 uDepthCueBgColor;
     uniform float uOutlineStrength;
+    uniform int uRenderStyle;  // 0 = glossy, 1 = matte, 2 = toon
+    // Toon (cel) thresholds — AtomCanvas ToonHighlightMaterial parity.
+    uniform float uShadowThreshold;
+    uniform float uHighlightThreshold;
+    uniform float uShadowBrightness;
+    uniform float uSpecStrength;  // glossy specular highlight multiplier (1.0 = default)
     // projectionMatrix is only auto-injected into vertex shader, must re-declare for fragment
     uniform mat4 projectionMatrix;
 
@@ -244,15 +269,35 @@
         baseColor = mix(vec3(luminance), baseColor, vSaturation);
       }
 
-      // Blinn-Phong lighting with camera-fixed (headlamp) light direction
+      // Lighting with camera-fixed (headlamp) light direction.
       vec3 lightDirView = normalize(uLightDir);
       vec3 viewDir = uIsOrthographic ? vec3(0.0, 0.0, 1.0) : normalize(-hitPos);
-      float diffuse = max(dot(normal, lightDirView), 0.0);
-      vec3 halfDir = normalize(lightDirView + viewDir);
-      float specular = pow(max(dot(normal, halfDir), 0.0), 60.0);
 
-      vec3 color = baseColor * (uAmbientIntensity + uDirectionalIntensity * diffuse)
-                 + vec3(1.0) * specular * 0.6;
+      vec3 color;
+      if (uRenderStyle == 2) {
+        // ── Toon: 3-band cel shading (AtomCanvas ToonHighlightMaterial) ──
+        // Per-instance baseColor stands in for the reference's uColor/vTint;
+        // vOpacity carries the per-instance alpha (instanceAlpha equivalent).
+        float diffuse = dot(normal, lightDirView);
+        if (diffuse > uHighlightThreshold) {
+          color = vec3(1.0, 1.0, 1.0);
+        } else if (diffuse > uShadowThreshold) {
+          color = baseColor;
+        } else {
+          color = baseColor * uShadowBrightness;
+        }
+      } else if (uRenderStyle == 1) {
+        // ── Matte: diffuse-only Lambert, no specular highlight ──
+        float diffuse = max(dot(normal, lightDirView), 0.0);
+        color = baseColor * (uAmbientIntensity + uDirectionalIntensity * diffuse);
+      } else {
+        // ── Glossy (default): Blinn-Phong diffuse + specular ──
+        float diffuse = max(dot(normal, lightDirView), 0.0);
+        vec3 halfDir = normalize(lightDirView + viewDir);
+        float specular = pow(max(dot(normal, halfDir), 0.0), 60.0);
+        color = baseColor * (uAmbientIntensity + uDirectionalIntensity * diffuse)
+                 + vec3(1.0) * specular * 0.6 * uSpecStrength;
+      }
 
       gl_FragColor = vec4(linearTosRGB(color), vOpacity);
 
@@ -289,7 +334,7 @@
       side: 0,
       uniforms: {
         uIsOrthographic: { value: false },
-        uLightDir: { value: new Vector3(-0.7, -0.5, 1.0).normalize() },
+        uLightDir: { value: light_dir.clone() }, // view-space headlamp (slider-driven); kept live by $effect below
         uAmbientIntensity: { value: ambient_light },
         uDirectionalIntensity: { value: directional_light },
         uDepthCueing: depth_cue_uniforms?.uDepthCueing ?? { value: 0 },
@@ -297,6 +342,13 @@
         uDepthFar: depth_cue_uniforms?.uDepthFar ?? { value: 10 },
         uDepthCueBgColor: depth_cue_uniforms?.uDepthCueBgColor ?? { value: new Color(0xffffff) },
         uOutlineStrength: depth_cue_uniforms?.uOutlineStrength ?? { value: 0 },
+        uRenderStyle: { value: render_style_to_int(render_style) },
+        // Glossy specular highlight multiplier (slider-driven); kept live by $effect below.
+        uSpecStrength: { value: highlight_strength },
+        // Toon (cel) thresholds — AtomCanvas ToonHighlightMaterial defaults.
+        uShadowThreshold: { value: 0.3 },
+        uHighlightThreshold: { value: 0.97 },
+        uShadowBrightness: { value: 0.5 },
       },
     })
   }
@@ -467,6 +519,30 @@
   $effect(() => {
     opaque_material.uniforms.uAmbientIntensity.value = ambient_light
     opaque_material.uniforms.uDirectionalIntensity.value = directional_light
+    // mark_dirty: imperative ShaderMaterial uniform write bypasses <T.> prop chain
+    mark_dirty()
+  })
+
+  // Render-style is a uniform int branch in the fragment shader — no recompile,
+  // no material swap, so glossy/matte/toon toggle live with zero GPU churn.
+  $effect(() => {
+    opaque_material.uniforms.uRenderStyle.value = render_style_to_int(render_style)
+    // mark_dirty: imperative ShaderMaterial uniform write bypasses <T.> prop chain
+    mark_dirty()
+  })
+
+  // Headlamp direction is a plain view-space uniform — copy the slider-derived
+  // direction into the live material so light moves the instant the slider does.
+  $effect(() => {
+    opaque_material.uniforms.uLightDir.value.copy(light_dir)
+    // mark_dirty: imperative ShaderMaterial uniform write bypasses <T.> prop chain
+    mark_dirty()
+  })
+
+  // Specular highlight strength is a plain float uniform — copy the slider value
+  // into the live material so glossiness changes the instant the slider moves.
+  $effect(() => {
+    opaque_material.uniforms.uSpecStrength.value = highlight_strength
     // mark_dirty: imperative ShaderMaterial uniform write bypasses <T.> prop chain
     mark_dirty()
   })
