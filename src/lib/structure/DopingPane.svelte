@@ -2,6 +2,7 @@
   import type { PymatgenStructure } from '$lib/structure'
   import type { ElementSymbol } from '$lib'
   import { PeriodicTable } from '$lib/periodic-table'
+  import DesktopRequiredNotice from '$lib/DesktopRequiredNotice.svelte'
   import { combinatorial_substitution, random_substitution } from '$lib/api/build'
   import type { RandomSubstitutionParams } from '$lib/api/build'
   import type { TrajectoryType } from '$lib/trajectory'
@@ -648,9 +649,7 @@
 
   <!-- Actions -->
   <section class="dp-section">
-    {#if error_message}
-      <div class="dp-error">{error_message}</div>
-    {/if}
+    <DesktopRequiredNotice error={error_message} />
 
     <button
       class="dp-btn-generate"
@@ -1000,11 +999,6 @@
     background: var(--input-bg, rgba(0, 0, 0, 0.15));
     color: var(--text-color, #e0e0e0);
     font-size: 0.85em;
-  }
-
-  .dp-error {
-    font-size: 0.8em;
-    color: var(--error-color, #ef4444);
   }
 
   .dp-btn-generate {
