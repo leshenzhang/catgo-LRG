@@ -86,6 +86,21 @@
     let editor: any = null
 
     async function init() {
+      // Monaco cancels in-flight async work (delayers, worker requests) when an
+      // editor/model is disposed — on close or an HMR/reload remount — surfacing
+      // as a benign `Unhandled rejection: Canceled`. Unlike the worker-thrown
+      // inlay-hints error, this one rejects on the MAIN thread, so a scoped
+      // handler can swallow it. Drop ONLY `Canceled` (by name/message), once,
+      // globally; every other rejection propagates untouched.
+      const g = self as unknown as { __catgo_monaco_canceled_guard?: boolean }
+      if (!g.__catgo_monaco_canceled_guard) {
+        g.__catgo_monaco_canceled_guard = true
+        self.addEventListener(`unhandledrejection`, (e: PromiseRejectionEvent) => {
+          const r = e.reason as { name?: string; message?: string } | undefined
+          if (r && (r.name === `Canceled` || r.message === `Canceled`)) e.preventDefault()
+        })
+      }
+
       // Dynamic import for SSR safety
       const monaco = await import(`monaco-editor`)
 
@@ -95,9 +110,32 @@
       // @ts-ignore
       self.MonacoEnvironment = {
         getWorker(_: string, label: string) {
+          // Each language needs its OWN worker — the base editor.worker lacks
+          // language-service methods, so opening e.g. a .ts file with only the
+          // base worker floods the console with
+          // `Missing requestHandler or method: provideInlayHints`. Route every
+          // language Monaco bundles a worker for to that worker.
           if (label === `json`) {
             return new Worker(
               new URL(`monaco-editor/esm/vs/language/json/json.worker.js`, import.meta.url),
+              { type: `module` },
+            )
+          }
+          if (label === `css` || label === `scss` || label === `less`) {
+            return new Worker(
+              new URL(`monaco-editor/esm/vs/language/css/css.worker.js`, import.meta.url),
+              { type: `module` },
+            )
+          }
+          if (label === `html` || label === `handlebars` || label === `razor`) {
+            return new Worker(
+              new URL(`monaco-editor/esm/vs/language/html/html.worker.js`, import.meta.url),
+              { type: `module` },
+            )
+          }
+          if (label === `typescript` || label === `javascript`) {
+            return new Worker(
+              new URL(`monaco-editor/esm/vs/language/typescript/ts.worker.js`, import.meta.url),
               { type: `module` },
             )
           }
@@ -106,6 +144,33 @@
             { type: `module` },
           )
         },
+      }
+
+      // The TS/JS language service registers worker-backed providers (inlay
+      // hints, completions, diagnostics, …). One of them — inlay hints — routes
+      // its request through the base editor worker's foreign-module
+      // (`EditorWorker.$fmr`), which can't handle `provideInlayHints` in monaco
+      // 0.55, so every .ts/.js open floods the console. This is a file
+      // viewer/editor, not an IDE, so it needs NONE of those language services —
+      // only main-thread syntax highlighting (Monarch), which is unaffected.
+      // Disable the whole worker-backed feature set so no `$fmr` request is ever
+      // issued. (The editor's `inlayHints.enabled` option is a separate,
+      // insufficient lever — the provider still registers.)
+      const ts_langs = (monaco.languages as { typescript?: {
+        typescriptDefaults?: { setModeConfiguration: (c: Record<string, boolean>) => void }
+        javascriptDefaults?: { setModeConfiguration: (c: Record<string, boolean>) => void }
+      } }).typescript
+      const NO_LANG_FEATURES: Record<string, boolean> = {
+        completionItems: false, hovers: false, documentSymbols: false,
+        definitions: false, references: false, documentHighlights: false,
+        rename: false, diagnostics: false, documentRangeFormattingEdits: false,
+        signatureHelp: false, onTypeFormattingEdits: false, codeActions: false,
+        inlayHints: false,
+      }
+      for (const d of [ts_langs?.typescriptDefaults, ts_langs?.javascriptDefaults]) {
+        try {
+          d?.setModeConfiguration(NO_LANG_FEATURES)
+        } catch { /* older monaco without modeConfiguration — editor option covers it */ }
       }
 
       editor = monaco.editor.create(container_el!, {
@@ -129,6 +194,12 @@
         cursorBlinking: `smooth`,
         cursorSmoothCaretAnimation: `on`,
         stickyScroll: { enabled: false },
+        // Inlay hints route through the base editor worker's foreign-module
+        // (`EditorWorker.$fmr`), which doesn't implement `provideInlayHints` in
+        // monaco 0.55 → every TS/JS open flooded the console with
+        // `Missing requestHandler or method: provideInlayHints`. This is a file
+        // viewer/editor, not an IDE, so inlay hints add nothing — turn them off.
+        inlayHints: { enabled: `off` },
       })
       editor_instance = editor
 
