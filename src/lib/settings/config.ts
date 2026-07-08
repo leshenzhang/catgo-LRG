@@ -32,6 +32,15 @@ export const LIGHTING_PROFILE_DEFAULTS: Readonly<Record<RenderStyle, LightingPro
     ambient_light: 0.5,
     highlight_strength: 1.0,
   },
+  // MatCap samples a baked studio-sphere texture instead of the scene lights, so
+  // the light params are inert here — kept for slider consistency.
+  matcap: {
+    light_azimuth: 35,
+    light_elevation: 45,
+    directional_light: 0.3,
+    ambient_light: 0.7,
+    highlight_strength: 0.0,
+  },
   matte: {
     light_azimuth: 35,
     light_elevation: 45,
@@ -450,10 +459,22 @@ export const SETTINGS_CONFIG: SettingsConfig = {
       enum: {
         glossy: `Glossy`,
         metallic: `Metallic`,
+        matcap: `MatCap`,
         matte: `Matte`,
         soft: `2.5D`,
         flat: `2D Flat`,
         toon: `Toon`,
+      },
+    },
+    matcap_preset: {
+      value: `ceramic`,
+      description:
+        `MatCap material preset (only applies when Material = MatCap). Ceramic = soft glazed; Clay = flat matte; Glossy = tighter shine; Pearl = luminous soft.`,
+      enum: {
+        ceramic: `Ceramic`,
+        clay: `Clay`,
+        glossy: `Glossy`,
+        pearl: `Pearl`,
       },
     },
     light_azimuth: {
