@@ -220,11 +220,21 @@ export async function parse_trajectory_data(
       return parse_gaussian_output(content, filename)
     }
 
-    // vasprun.xml trajectory — convert to extxyz then parse
-    if (filename?.toLowerCase().endsWith(`.xml`) && content.includes(`<modeling`)) {
+    // vasprun.xml trajectory — detect by CONTENT, not extension. The filename here
+    // can be a temp/materialized path (large remote files are staged locally before
+    // loading) that no longer ends in `.xml`, so an extension check silently skips
+    // vasprun and the file falls through to the "Unsupported text format" throw.
+    if (content.includes(`<modeling`) && content.includes(`<calculation`)) {
       const { parse_vasprun_trajectory } = await import(`$lib/structure/parse`)
       const extxyz = parse_vasprun_trajectory(content)
       if (extxyz) return parse_xyz_trajectory(extxyz)
+      // Detected a vasprun but produced no frames — surface WHY (truncated read
+      // vs parse failure) instead of the generic "Unsupported text format".
+      const calcs = (content.match(/<calculation/g) || []).length
+      const tail = content.slice(-30).replace(/\s+/g, ` `)
+      throw new Error(
+        `vasprun parse produced no frames: bytes=${content.length}, calcs=${calcs}, tail="${tail}"`,
+      )
     }
 
     // Single XYZ fallback
