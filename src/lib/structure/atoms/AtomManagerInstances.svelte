@@ -231,6 +231,13 @@
 
       vec3 hitPos;
       vec3 normal;
+      // Silhouette anti-aliasing: instead of a hard discard at the sphere edge
+      // (d2 > r2), fade a ~1px coverage band via screen-space derivatives and
+      // feed it to alpha-to-coverage (material.alphaToCoverage + MSAA). This
+      // smooths the jagged impostor outline that plain MSAA can't touch, since
+      // a hard discard gives no sub-pixel coverage. thc is clamped so grazing-
+      // edge fragments (d2 slightly > r2) still get a finite hit for shading.
+      float coverage = 1.0;
 
       if (uIsOrthographic) {
         // Orthographic: ray origin at fragment XY on near plane, direction -Z
@@ -238,8 +245,12 @@
         vec2 offset = vQuadCoord * vRadius * 1.05;
         float d2 = dot(offset, offset);
         float r2 = vRadius * vRadius;
-        if (d2 > r2) discard;
-        float thc = sqrt(r2 - d2);
+        // Analytic 1px-wide edge coverage on the RADIAL distance (not d², whose
+        // fast edge derivative gave a ~4px band that read as a white halo).
+        float d = length(offset);
+        coverage = clamp((vRadius - d) / fwidth(d) + 0.5, 0.0, 1.0);
+        if (coverage <= 0.0) discard;
+        float thc = sqrt(max(r2 - min(d2, r2), 0.0));
         // Hit point: fragment XY, sphere front Z
         hitPos = vec3(vCenter.xy + offset, vCenter.z + thc);
         normal = vec3(offset, thc) / vRadius;
@@ -251,10 +262,13 @@
         vec3 cr = cross(vCenter, rayDir);
         float d2 = dot(cr, cr);
         float r2 = vRadius * vRadius;
-        if (d2 > r2) discard;
+        // Analytic 1px-wide edge coverage on the RADIAL distance (see ortho).
+        float d = sqrt(d2);
+        coverage = clamp((vRadius - d) / fwidth(d) + 0.5, 0.0, 1.0);
+        if (coverage <= 0.0) discard;
 
         float tca = dot(vCenter, rayDir);
-        float thc = sqrt(r2 - d2);
+        float thc = sqrt(max(r2 - min(d2, r2), 0.0));
         float t = tca - thc;
         hitPos = t * rayDir;
 
@@ -307,7 +321,7 @@
                  + vec3(1.0) * specular * 0.6 * uSpecStrength;
       }
 
-      gl_FragColor = vec4(linearTosRGB(color), vOpacity);
+      gl_FragColor = vec4(linearTosRGB(color), vOpacity * coverage);
 
       // Depth cueing: VESTA-style fade toward background.
       // uDepthCueBgColor is in linear-RGB (Three.js color space), but
@@ -339,6 +353,11 @@
       transparent,
       depthWrite: !transparent,
       depthTest: !transparent,
+      // Alpha-to-coverage turns the fragment's edge-coverage alpha into MSAA
+      // sample coverage — anti-aliases the impostor silhouette on the opaque
+      // pass (needs the canvas MSAA, which is on). Harmless on the transparent
+      // pass (it blends anyway).
+      alphaToCoverage: !transparent,
       side: 0,
       uniforms: {
         uIsOrthographic: { value: false },
