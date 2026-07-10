@@ -35,6 +35,7 @@
   import AbacusExport from '$lib/structure/export/AbacusExport.svelte'
   import AmberExport from '$lib/structure/export/AmberExport.svelte'
   import SparkExport from '$lib/structure/export/SparkExport.svelte'
+  import AgoxExport from '$lib/structure/export/AgoxExport.svelte'
   import CatRenderParamsPane from '$lib/structure/catrender/CatRenderParamsPane.svelte'
   import CatRenderViewPane from '$lib/structure/catrender/CatRenderViewPane.svelte'
 
@@ -128,7 +129,7 @@
   }
 
   // Active section tab
-  let active_section = $state<'structure' | 'figure' | 'qe' | 'lammps' | 'vasp' | 'cp2k' | 'gaussian' | 'gromacs' | 'orca' | 'abacus' | 'amber' | 'spark' | 'catrender'>('structure')
+  let active_section = $state<'structure' | 'figure' | 'qe' | 'lammps' | 'vasp' | 'cp2k' | 'agox' | 'gaussian' | 'gromacs' | 'orca' | 'abacus' | 'amber' | 'spark' | 'catrender'>('structure')
 
   // RT13: catrender is now TWO independent floating DraggablePanes (Params +
   // View) so the preview is never buried under the 17 knobs. The "Render"
@@ -412,6 +413,7 @@
     <button class:active={active_section === 'lammps'} onclick={() => active_section = 'lammps'}>LAMMPS</button>
     <button class:active={active_section === 'vasp'} onclick={() => active_section = 'vasp'}>VASP</button>
     <button class:active={active_section === 'cp2k'} onclick={() => active_section = 'cp2k'}>CP2K</button>
+    <button class:active={active_section === 'agox'} onclick={() => active_section = 'agox'}>AGOX+GCMC</button>
     <button class:active={active_section === 'gaussian'} onclick={() => active_section = 'gaussian'}>Gaussian</button>
     <button class:active={active_section === 'gromacs'} onclick={() => active_section = 'gromacs'}>GROMACS</button>
     <button class:active={active_section === 'orca'} onclick={() => active_section = 'orca'}>ORCA</button>
@@ -625,6 +627,15 @@
       bind:generation_error
       bind:active_file
       {on_request_vacuum_box}
+    />
+
+  {:else if active_section === 'agox'}
+    <AgoxExport
+      {structure}
+      bind:prefix
+      bind:generated_output
+      bind:generation_error
+      bind:active_file
     />
 
   {:else if active_section === 'gaussian'}

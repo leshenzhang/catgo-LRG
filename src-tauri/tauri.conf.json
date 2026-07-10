@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "CatGo",
+  "productName": "catgo1",
   "version": "1.4.5",
   "identifier": "com.catgo.app",
   "build": {
@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "CatGo - AI Workbench for Computational Materials",
+        "title": "catgo1 - AI Workbench for Computational Materials",
         "width": 1400,
         "height": 900,
         "minWidth": 800,
