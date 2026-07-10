@@ -59,13 +59,6 @@ jobs:
           pip install -r reqs_no_ob.txt
           rm reqs_no_ob.txt
 
-      - name: Build backend
-        run: |
-          cd server
-          python -m PyInstaller catgo_server.spec --noconfirm
-          mkdir -p ../src-tauri/binaries
-          cp dist/catgo-server.exe ../src-tauri/binaries/catgo-server-x86_64-pc-windows-msvc.exe
-
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -75,6 +68,16 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+
+      - name: Build cube-processor
+        run: cargo build --release --manifest-path tools/cube-processor/Cargo.toml
+
+      - name: Build backend
+        run: |
+          cd server
+          python -m PyInstaller catgo_server.spec --noconfirm
+          mkdir -p ../src-tauri/binaries
+          cp dist/catgo-server.exe ../src-tauri/binaries/catgo-server-x86_64-pc-windows-msvc.exe
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
